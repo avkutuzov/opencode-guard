@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { appendAudit, type AuditEvent } from "../src/audit.ts"
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -51,8 +51,14 @@ test("audit event schema never carries raw secret text", () => {
 })
 
 test("appendAudit does not throw on unwritable dir (fails silent, never crashes plugin)", () => {
+  // Путь через существующий файл даёт ENOTDIR на любой ОС.
+  // Раньше здесь был Z:\nonexistent\... — на Linux это валидное имя
+  // каталога, и тест писал guard-audit.jsonl прямо в репозиторий.
+  const tmp = mkdtempSync(join(tmpdir(), "guard-audit-"))
+  const blocker = join(tmp, "blocker")
+  writeFileSync(blocker, "occupied")
   assert.doesNotThrow(() =>
-    appendAudit("Z:\\nonexistent\\guard\\dir", {
+    appendAudit(join(blocker, "nested"), {
       ts: new Date().toISOString(),
       kind: "prompt",
       categories: ["api-key"],
@@ -60,4 +66,6 @@ test("appendAudit does not throw on unwritable dir (fails silent, never crashes 
       action: "redacted",
     }),
   )
+  assert.ok(!existsSync(join(blocker, "nested")))
+  rmSync(tmp, { recursive: true, force: true })
 })

@@ -108,7 +108,7 @@ The OpenCode server watches `src/**` and reloads the plugin on save — no servi
 ```json
 "plugins": [
   {
-    "package": "C:/pojects/AI_Projects/opencode-guard",
+    "package": "/absolute/path/to/opencode-guard",
     "options": { "mode": "enforce" }
   }
 ]
