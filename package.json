@@ -1,0 +1,25 @@
+{
+  "name": "opencode-guard",
+  "version": "0.1.0",
+  "description": "Security plugin for OpenCode — scans prompts and tool calls for secrets/PII, redacts on write, blocks sensitive file paths, audits detections",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.2.7",
+    "@opencode/schema": "^2.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
