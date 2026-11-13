@@ -1,4 +1,4 @@
-import { Tool } from "@opencode/schema/tool"
+import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import type { Plugin } from "@opencode/plugin"
 import { DEFAULT_PATTERNS, type Pattern } from "./patterns.ts"
 import { redact, scan } from "./scan.ts"
@@ -26,7 +26,7 @@ function audit(cfg: GuardConfig, ev: AuditEvent): void {
 }
 
 function veto(message: string): never {
-  throw new Tool.Error({ message })
+  throw new ToolError({ message })
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -245,7 +245,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
         if (typeof msg === "string") {
           const r = redact(msg, patterns)
           if (r.matches.length > 0) {
-            if (mutate) event.error = new Tool.Error({ message: r.text })
+            if (mutate) event.error = new ToolError({ message: r.text })
             audit(cfg, { ts: now(), kind: "tool.after", tool: event.tool, sessionID: event.sessionID, categories: categoriesOf(r.matches), count: r.matches.length, action: mutate ? "redacted" : "warn" })
           }
         }
