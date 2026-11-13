@@ -98,6 +98,7 @@ The OpenCode server watches `src/**` and reloads the plugin on save — no servi
 - Креды: `password=<REDACTED:credential> basic-auth в URL, строки подключения `scheme://user:pass@…`
 - Private keys: PEM-блоки целиком
 - ПДн (RU): ИНН/СНИЛС/паспорт (только с контекстным словом), телефоны +7/8, email, банковские карты (с Luhn-валидацией), ФИО (только после маркера «ФИО:»)
+- Энкодинг-обход: base64/base64url/hex-блобы (≥16 символов) декодируются и прогоняются по тем же паттернам; при матче маскируется исходный блоб целиком (`<REDACTED:api-key:encoded>`). Глубина декодирования — 1, лимит 24 блоба на текст, декодированный мусор (sha256/UUID/DER) игнорируется
 
 Приоритет — специфичные паттерны выше generic; вложенные матчи схлопываются во внешнюю маску (никаких остатков `user:sk-…`).
 
@@ -134,12 +135,13 @@ The OpenCode server watches `src/**` and reloads the plugin on save — no servi
 - `opencode run` может адмитить промпт до готовности плагинов — защиту в этом окне догоняет context-скраб
 - ФИО — только с явным маркером (без него — слишком много ложных срабатываний)
 - shell-хук не может кидать вето (API так не умеет) — команда заменяется на `echo … && exit 1`
+- decode-and-scan не ловит: path-эвейжен (`.[e]nv`-глобы), chunk-splitting (`cut -c`), вложенный энкодинг (глубина 1), блобы >8192 символов. От случайных утечек, не от целенаправленного агента
 
 ## Разработка
 
 ```bash
 npm install
-npm test          # node --test (41 тест)
+npm test          # node --test (51 тест)
 npm run typecheck # tsc --noEmit
 ```
 
