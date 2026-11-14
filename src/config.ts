@@ -7,6 +7,10 @@ export interface GuardConfig {
   scanPrompts: boolean
   redactOnWrite: boolean
   scanOutbound: boolean
+  /** scan ~/.config/opencode/skills at plugin startup; findings are warn-only */
+  scanSkillsOnLoad: boolean
+  /** trusted skill dir names excluded from the startup scan */
+  exemptSkills: string[]
   blockPaths: string[]
   writeProtectPaths: string[]
   exemptPaths: string[]
@@ -54,6 +58,8 @@ export function resolveConfig(options: unknown): GuardConfig {
     scanPrompts: o.scanPrompts !== false,
     redactOnWrite: o.redactOnWrite !== false,
     scanOutbound: o.scanOutbound !== false,
+    scanSkillsOnLoad: o.scanSkillsOnLoad !== false,
+    exemptSkills: strArray(o.exemptSkills) ? [...o.exemptSkills] : [],
     blockPaths: strArray(o.blockPaths) ? [...new Set([...DEFAULT_BLOCK_PATHS, ...o.blockPaths])] : [...DEFAULT_BLOCK_PATHS],
     writeProtectPaths: strArray(o.writeProtectPaths) ? [...o.writeProtectPaths] : [],
     exemptPaths: strArray(o.exemptPaths) ? [...o.exemptPaths] : [],

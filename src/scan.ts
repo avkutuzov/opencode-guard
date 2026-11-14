@@ -66,6 +66,10 @@ function collect(p: Pattern, text: string): Match[] {
       if (m[0] === "") re.lastIndex++
       continue
     }
+    if (p.validate && !p.validate(raw, text, idx[0], idx[1])) {
+      if (m[0] === "") re.lastIndex++
+      continue
+    }
     out.push({ start: idx[0], end: idx[1], category: p.category, matchedBy: p.id, raw, mask: maskFor(p, raw) })
     if (m[0] === "") re.lastIndex++
   }

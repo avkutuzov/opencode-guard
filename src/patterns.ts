@@ -6,6 +6,7 @@ export type PatternCategory =
   | "connection-string"
   | "pii"
   | "pii-name"
+  | "prompt-injection"
 
 export interface Pattern {
   /** stable id, used in audit and disabledPatterns */
@@ -20,6 +21,8 @@ export interface Pattern {
   keepLast?: number
   /** validate digit-only match with Luhn before accepting */
   luhn?: boolean
+  /** arbitrary acceptance check; gets the raw span and its position in the full text */
+  validate?: (raw: string, text: string, start: number, end: number) => boolean
 }
 
 export const DEFAULT_PATTERNS: readonly Pattern[] = [
@@ -72,4 +75,46 @@ export const DEFAULT_PATTERNS: readonly Pattern[] = [
     flags: "i",
     maskGroup: 1,
   },
+  // --- prompt injection (skill-guard) ---
+  {
+    id: "inj-override",
+    category: "prompt-injection",
+    regex:
+      "ignore\\s+(?:(?:all|any|the|your|of|and),?\\s+){0,3}(?:previous|prior|above|earlier)\\s+instructions" +
+      "|disregard\\s+(?:(?:all|any|the|your|of|and)\\s+){0,3}(?:previous|prior|above|earlier|everything)(?:\\s+instructions)?" +
+      "|forget\\s+(?:everything|all\\s+(?:previous\\s+)?instructions|what\\s+you\\s+(?:were\\s+)?(?:told|instructed))" +
+      "|ignore\\s+the\\s+above" +
+      "|from\\s+now\\s+on\\s+(?:you\\b|ignore|follow|obey)" +
+      "|игнорируй(?:те)?\\s+(?:[а-яё'-]+?\\s+){0,3}[а-яё'-]*?(?:инструкци[ийяюеё]|указани[ийяюеё]|сказанн[оыеёа]|изложенн[оыеёа])" +
+      "|забудь(?:те)?\\s+(?:(?:всё|все)\\s+инструкции|предыдущие(?:\\s+инструкции)?)" +
+      "|отныне\\s+ты",
+    flags: "i",
+  },
+  {
+    id: "inj-exfil-combo",
+    category: "prompt-injection",
+    regex:
+      "~[/\\\\](?:\\.ssh|\\.aws|\\.gnupg)[/\\\\]?[^\\s'\"\\\\]*" +
+      "|(?:[/\\\\]|(?<![\\w.]))\\.env\\b(?:\\.[A-Za-z0-9._-]+)?" +
+      "|\\bid_rsa\\b" +
+      "|\\bcredentials\\.(?:json|csv|ini|txt|ya?ml)\\b|[/\\\\]credentials\\b",
+    validate: (raw, text, start, end) => {
+      const window = text.slice(Math.max(0, start - 200), end + 200)
+      return /curl|wget|(?:^|\s)nc\s|netcat|exfiltrat|base64|send(?:ing)?\b|post(?:ing)?\b|fetch(?:ing)?\b|upload(?:ing)?\b|transfer(?:ing|red)?\b|отправь|отправить|выгрузи|выгрузить|залей|передай|пришли|скинь/i.test(window)
+    },
+  },
+  {
+    id: "inj-zerowidth",
+    category: "prompt-injection",
+    // U+200D (ZWJ) excluded: legit emoji/composite scripts; a lone BOM at position 0 is routine.
+    regex: "[\\u200B\\u200C\\u2060\\uFEFF\\u202E\\u202B]+",
+    validate: (raw, _text, start) => !(start === 0 && raw.length === 1 && raw.charCodeAt(0) === 0xfeff),
+  },
 ]
+
+/** patterns minus disabled ids; single source of truth for the active set */
+export function activePatterns(disabledPatterns: readonly string[]): readonly Pattern[] {
+  if (disabledPatterns.length === 0) return DEFAULT_PATTERNS
+  const off = new Set(disabledPatterns)
+  return DEFAULT_PATTERNS.filter((p) => !off.has(p.id))
+}

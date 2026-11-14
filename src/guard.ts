@@ -1,10 +1,15 @@
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import type { Plugin } from "@opencode/plugin"
-import { DEFAULT_PATTERNS, type Pattern } from "./patterns.ts"
+import { createHash } from "node:crypto"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { activePatterns, type Pattern } from "./patterns.ts"
 import { redact, scan } from "./scan.ts"
 import { isPathBlocked, isPathExempt, isPathWriteProtected } from "./glob.ts"
 import type { GuardConfig } from "./config.ts"
 import { appendAudit, type AuditEvent } from "./audit.ts"
+import { scanSkillDir } from "./skillcheck.ts"
 
 type Ctx = Plugin.Context
 
@@ -13,12 +18,6 @@ const WRITE_TOOLS = new Set(["write", "edit", "patch"])
 const SHELL_TOOLS = new Set(["shell", "bash"])
 /** never rewrite these (matching anchors must stay byte-identical to the file) */
 const SKIP_REDACT_KEYS = new Set(["oldString", "old_string", "oldText"])
-
-function activePatterns(cfg: GuardConfig): readonly Pattern[] {
-  if (cfg.disabledPatterns.length === 0) return DEFAULT_PATTERNS
-  const off = new Set(cfg.disabledPatterns)
-  return DEFAULT_PATTERNS.filter((p) => !off.has(p.id))
-}
 
 function audit(cfg: GuardConfig, ev: AuditEvent): void {
   if (!cfg.audit.enabled) return
@@ -137,8 +136,41 @@ function trackHook(reg: Promise<{ dispose(): Promise<void> }>): void {
 const tracked: { dispose(): Promise<void> }[] = []
 
 export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
-  const patterns = activePatterns(cfg)
+  const patterns = activePatterns(cfg.disabledPatterns)
   const now = () => new Date().toISOString()
+
+  // --- startup scan of installed skills (warn-only, never blocks plugin load) ---
+  if (cfg.scanSkillsOnLoad) {
+    try {
+      const dir = join(homedir(), ".config", "opencode", "skills")
+      const findings = scanSkillDir(dir, patterns, cfg.exemptSkills)
+      // hot-reload: skip re-audit when the findings summary is unchanged
+      const hash = createHash("sha256").update(JSON.stringify(findings)).digest("hex")
+      const marker = join(cfg.audit.dir, "guard-skillscan.state")
+      let prev: string | null = null
+      try {
+        prev = readFileSync(marker, "utf8")
+      } catch {
+        prev = null
+      }
+      if (prev !== hash) {
+        try {
+          mkdirSync(cfg.audit.dir, { recursive: true })
+          writeFileSync(marker, hash, "utf8")
+        } catch {
+          // state file is best-effort
+        }
+        for (const f of findings) {
+          audit(cfg, { ts: now(), kind: "skill", categories: f.categories, count: f.count, action: "warn" })
+        }
+        if (findings.length > 0) {
+          console.warn(`guard: ${findings.length} скилл(ов) с подозрительным содержимым: ${findings.map((f) => f.skill).join(", ")} — детали в аудите`)
+        }
+      }
+    } catch {
+      // never crash plugin load
+    }
+  }
 
   // --- user prompts ---
   if (cfg.scanPrompts) {
@@ -277,7 +309,10 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
         }
       }
 
-      n += deepRedact(result, patterns, mutate)
+      // content was already scrubbed above — scan the remainder (output/metadata)
+      // so matches are counted once
+      const rest = { ...result, content: undefined }
+      n += deepRedact(rest, patterns, mutate)
       if (n > 0) {
         audit(cfg, { ts: now(), kind: "tool.after", tool: event.tool, sessionID: event.sessionID, categories: [...cats].sort(), count: n, action: mutate ? "redacted" : "warn" })
       }

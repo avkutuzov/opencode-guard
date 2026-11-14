@@ -16,12 +16,13 @@ Security plugin for [OpenCode](https://opencode.ai) V2: intercepts prompts, tool
 
 Audit: JSONL at `~/.local/share/opencode/guard/guard-audit.jsonl` — categories/counts/actions only, **never** raw values.
 
-## Detection (28 patterns)
+## Detection (29 patterns)
 
 - API keys: OpenAI `sk-`, GitHub `ghp_`/`github_pat_`, AWS `AKIA`, Google `AIza`/`ya29.`, Slack `xox` + webhooks, Stripe, GitLab `glpat-`, Telegram bot, HuggingFace, npm
 - Tokens: JWT, `Bearer …`
 - Credentials: `password=…`, basic-auth in URLs, connection strings `scheme://user:pass@…`
 - Private keys: whole PEM blocks
+- Prompt injection: instruction overrides (EN/RU), secret-path + exfil-verb combos, zero-width/bidi chars; base64/hex blobs are decoded and re-scanned (depth 1)
 - PII (RU): ИНН/СНИЛС/passport (context word required), +7/8 phones, email, bank cards (Luhn-validated), ФИО <REDACTED:pii-name> (only after a "ФИО:" marker)
 
 Specific patterns take priority over generic ones; nested matches collapse into the outer mask (no `user:sk-…` fragments survive).
@@ -49,6 +50,7 @@ Then `opencode service restart`. Verify with `opencode api get "/api/plugin?dire
 | `scanPrompts` | `true` | scan user prompts |
 | `redactOnWrite` | `true` | redact on write/shell |
 | `scanOutbound` | `true` | scrub outbound context |
+| `scanSkillsOnLoad` | `true` | scan installed skills at startup (warn-only audit) |
 | `blockPaths` | built-in list | **added** to defaults (union) |
 | `writeProtectPaths` | `[]` | read ok, write blocked |
 | `exemptPaths` | `[]` | exceptions (fixtures with legitimate keys) |
@@ -118,12 +120,13 @@ opencode service restart
 
 Аудит: JSONL в `~/.local/share/opencode/guard/guard-audit.jsonl` — только категории/количества/действия, **никогда** сырые значения.
 
-## Детекция (28 паттернов)
+## Детекция (29 паттернов)
 
 - API-ключи: OpenAI `sk-`, GitHub `ghp_`/`github_pat_`, AWS `AKIA`, Google `AIza`/`ya29.`, Slack `xox`+webhooks, Stripe, GitLab `glpat-`, Telegram bot, HuggingFace, npm
 - Токены: JWT, `Bearer …`
 - Креды: `password=<REDACTED:credential> basic-auth в URL, строки подключения `scheme://user:pass@…`
 - Private keys: PEM-блоки целиком
+- Prompt injection: переопределение инструкций (EN/RU), связка «путь к секрету + глагол эксфильтрации», zero-width/bidi-символы; base64/hex-блобы декодируются и пересканируются (глубина 1)
 - ПДн (RU): ИНН/СНИЛС/паспорт (только с контекстным словом), телефоны +7/8, email, банковские карты (с Luhn-валидацией), ФИО (только после маркера «ФИО:»)
 - Энкодинг-обход: base64/base64url/hex-блобы (≥16 символов) декодируются и прогоняются по тем же паттернам; при матче маскируется исходный блоб целиком (`<REDACTED:api-key:encoded>`). Глубина декодирования — 1, лимит 24 блоба на текст, декодированный мусор (sha256/UUID/DER) игнорируется
 
@@ -150,6 +153,7 @@ opencode service restart
 | `scanPrompts` | `true` | скан промптов пользователя |
 | `redactOnWrite` | `true` | маскировка при записи/шелле |
 | `scanOutbound` | `true` | скраб исходящего контекста |
+| `scanSkillsOnLoad` | `true` | стартовый скан установленных скиллов (только warn-аудит) |
 | `blockPaths` | дефолтный список | **добавляется** к дефолтам (union) |
 | `writeProtectPaths` | `[]` | read ok, write blocked |
 | `exemptPaths` | `[]` | исключения (фикстуры с легитимными ключами) |
