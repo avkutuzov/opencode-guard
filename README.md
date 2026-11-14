@@ -72,6 +72,33 @@ npm run typecheck # tsc --noEmit
 
 The OpenCode server watches `src/**` and reloads the plugin on save — no service restart needed.
 
+## Updating
+
+**Local edits:** save a file — the server hot-reloads the plugin automatically via its file watcher. No commands needed.
+
+**After changes, make sure nothing broke:**
+
+```bash
+npm test   # expect: pass 42, fail 0
+```
+
+**If anything misbehaves (plugin failed to load, config changed outside the watched files):**
+
+```bash
+opencode service restart
+```
+
+This one command is the universal "reset/update".
+
+**Another machine (fresh code via git):**
+
+```bash
+cd opencode-guard
+git pull
+npm install              # only if package.json changed
+opencode service restart
+```
+
 ---
 
 <a id="русская-версия"></a>
@@ -141,8 +168,18 @@ The OpenCode server watches `src/**` and reloads the plugin on save — no servi
 
 ```bash
 npm install
-npm test          # node --test (51 тест)
+npm test          # node --test (52 теста)
 npm run typecheck # tsc --noEmit
 ```
 
 Сервер OpenCode сам следит за `src/**` и перезагружает плагин при сохранении — рестарт сервиса не нужен.
+
+## Как обновить
+
+**Правки кода:** сохранил файл — сервер сам перезагрузил плагин (file watcher). Никаких команд не требуется.
+
+**Проверка, что не сломано:** `npm test` — ожидается `pass 42, fail 0`.
+
+**Если что-то пошло не так (плагин не загрузился, правки вне зоны watcher'а):** `opencode service restart` — эта одна команда универсальный «сброс/апдейт».
+
+**На другой машине (свежий код через git):** `git pull` → `npm install` (если менялся `package.json`) → `opencode service restart`.
