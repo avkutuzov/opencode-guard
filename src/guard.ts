@@ -4,14 +4,14 @@ import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { activePatterns, type Pattern } from "./patterns.ts"
 import { redact, scan } from "./scan.ts"
 import { isPathBlocked, isPathExempt, isPathWriteProtected } from "./glob.ts"
 import type { GuardConfig } from "./config.ts"
 import { appendAudit, type AuditEvent } from "./audit.ts"
 import { scanSkillDir } from "./skillcheck.ts"
-import { checkInstall, isNpmInstall, parseAuditReport } from "./deps.ts"
+import { checkInstall, isNpmInstall, extractNpmPrefix, parseAuditReport } from "./deps.ts"
 
 type Ctx = Plugin.Context
 
@@ -148,8 +148,18 @@ const POST_AUDIT_TIMEOUT_MS = 120_000
 const postAuditRecent = new Map<string, number>()
 const POST_AUDIT_DEDUP_MS = 5 * 60_000
 
-function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void {
+/** install target dir for the post-audit: --prefix wins, resolved against the base dir when relative */
+function auditDirFor(command: string, baseDir: string): string {
   try {
+    const prefix = extractNpmPrefix(command)
+    if (!prefix) return baseDir
+    return isAbsolute(prefix) ? prefix : join(baseDir, prefix)
+  } catch {
+    return baseDir
+  }
+}
+
+function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void {  try {
     if (!isNpmInstall(command)) return
     const last = postAuditRecent.get(cwd)
     if (last && Date.now() - last < POST_AUDIT_DEDUP_MS) return
@@ -349,6 +359,11 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
             return
           }
         }
+        // agent shell commands never reach shell.create.before — schedule the post-audit here,
+        // using the server location as the project dir (an explicit --prefix overrides it)
+        if (cfg.postAudit && isNpmInstall(input.command)) {
+          schedulePostAudit(input.command, auditDirFor(input.command, ctx.location.directory), cfg)
+        }
       }
 
       // secret redaction on mutating input (only when every involved path is exempt)
@@ -445,11 +460,11 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
             audit(cfg, { ts: now(), kind: "deps", categories: [cat], count: 1, action: mutate ? "blocked" : "warn" })
           }
           // warn mode lets the install through — it still qualifies for post-audit
-          if (!mutate && cfg.postAudit) schedulePostAudit(event.command, event.cwd, cfg)
+          if (!mutate && cfg.postAudit) schedulePostAudit(event.command, auditDirFor(event.command, event.cwd), cfg)
           return
         }
       }
-      if (cfg.postAudit) schedulePostAudit(event.command, event.cwd, cfg)
+      if (cfg.postAudit) schedulePostAudit(event.command, auditDirFor(event.command, event.cwd), cfg)
       if (!cfg.redactOnWrite) return
       const r = redact(event.command, patterns)
       if (r.matches.length > 0) {

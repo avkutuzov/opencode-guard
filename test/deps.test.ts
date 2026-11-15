@@ -489,3 +489,14 @@ test("N-11: corrupted audit shapes do not produce phantom counts", () => {
   )
   assert.deepEqual(r, { total: 1, severities: { high: 1 } })
 })
+
+// --- post-audit dir resolution ---
+
+test("extractNpmPrefix: finds the audit target dir", async () => {
+  const { extractNpmPrefix } = await import("../src/deps.ts")
+  assert.equal(extractNpmPrefix("npm install lodash --prefix /srv/app"), "/srv/app")
+  assert.equal(extractNpmPrefix("npm install lodash --prefix=/srv/app"), "/srv/app")
+  assert.equal(extractNpmPrefix("npm --prefix /srv/app install lodash"), "/srv/app")
+  assert.equal(extractNpmPrefix("npm install lodash"), undefined)
+  assert.equal(extractNpmPrefix("echo x & npm install lodash --prefix rel/dir"), "rel/dir")
+})

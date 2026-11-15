@@ -378,6 +378,19 @@ export function isNpmInstall(command: string): boolean {
   return parseSegments(command).some((t) => t.manager === "npm")
 }
 
+/** extract an npm --prefix operand if present (install/audit should run there, not in the session dir) */
+export function extractNpmPrefix(command: string): string | undefined {
+  for (const segment of command.split(/&&|\|\||[;|&]|\n/)) {
+    const tokens = segment.split(/[\s;&|()<>"'`]+/).filter((t) => t.length > 0)
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i]
+      if (t === "--prefix") return tokens[i + 1]
+      if (t.startsWith("--prefix=")) return t.slice("--prefix=".length) || undefined
+    }
+  }
+  return undefined
+}
+
 export interface AuditSummary {
   total: number
   severities: Record<string, number>

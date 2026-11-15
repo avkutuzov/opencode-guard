@@ -50,6 +50,12 @@ Scoped: `@scope/pkg@1.0.0` парсится корректно (последни
 npm audit работает по npm-lockfile; yarn/pnpm — gap) и `postAudit` (default true) —
 через 60 сек (эвристика: install успеет завершиться) отсоединённо запускаем
 `npm audit --json` в `event.cwd` (timeout 120s, stdio pipe, ошибки глотаем).
+
+**Путь агента**: вызовы shell-инструмента агента НЕ проходят через `shell.create.before`
+(подтверждено наблюдением: kind:"shell" почти никогда не возникает) — поэтому дублирующий
+триггер стоит в `tool.execute.before`: каталог проекта = `ctx.location.directory`
+(серверная локация плагина), явный `--prefix` в команде переопределяет каталог аудита
+(относительный резолвится против каталога проекта).
 Результат: `parseAuditReport(json)` агрегирует по severity (npm ≥11: top-level `vulnerabilities`;
 v2: `auditReport.vulnerabilities`; v1: `advisories`; неизвестные severity → `unknown` — блокирует
 `__proto__`-строки). Находки → аудит
