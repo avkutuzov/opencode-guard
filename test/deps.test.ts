@@ -190,3 +190,15 @@ test("pip/cargo go through the blocklist (no squat check)", () => {
   assert.equal(checkInstall("pip install requests"), null) // legit, no squat outside npm
   assert.equal(checkInstall("cargo add serde"), null)
 })
+
+// --- review of live dogfood (npm-published 1.0.0): Windows manager suffixes ---
+
+test("Windows: npm.cmd / pnpm.cmd / yarn.cmd / pip.exe are recognized as managers", () => {
+  assert.equal(checkInstall("npm.cmd install lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("npm.cmd install event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("pnpm.cmd add lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("yarn.cmd add event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("pip.exe install event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("npm.cmd install lodash"), null)
+  assert.equal(checkInstall("npm.cmd test"), null)
+})

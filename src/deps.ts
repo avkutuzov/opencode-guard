@@ -95,8 +95,11 @@ function parseSegment(segment: string): InstallTarget | null {
     }
     break
   }
-  const manager = tokens[i]
-  if (!manager || !MANAGERS.has(manager)) return null
+  // Windows runners: npm.cmd, pnpm.cmd, pip.exe, yarn.ps1, ... — strip the script/extension suffix
+  const raw = tokens[i]
+  if (!raw) return null
+  const manager = raw.replace(/\.(?:cmd|ps1|exe|bat)$/i, "")
+  if (!MANAGERS.has(manager)) return null
   const sub = tokens[i + 1]
   if (!SUBCOMMANDS[manager]?.includes(sub)) return null
   if (manager === "yarn" && tokens[i + 2] === "global") return null

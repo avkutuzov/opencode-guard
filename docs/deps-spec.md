@@ -24,6 +24,8 @@ npm: install|i, yarn: add, pnpm: add|install, pip: install, cargo: add. Флаг
 `pkg`, `pkg@1.2.3`, `@scope/pkg@1.0.0` (версия после последнего `@`), pip: `pkg==1.0` (операторы
 стрипаются). Все сегменты проверяются на нарушения (parseSegments), не только первый.
 Прочее (curl, git clone, npx) → null.
+Windows-формы менеджеров нормализуются: `npm.cmd`, `pnpm.cmd`, `yarn.ps1`, `pip.exe` → базовое имя
+(иначе `npm.cmd install lodahs` проходил мимо — найдено живой проверкой опубликованного 1.0.0, фикс в 1.0.1).
 
 ### 2.2 Blocklist (встроенный список)
 
