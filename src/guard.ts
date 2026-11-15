@@ -161,18 +161,29 @@ function auditDirFor(command: string, baseDir: string): string {
 }
 
 let cachedNpmCmd: string | undefined
-/** absolute npm.cmd path when findable via PATH (the service host env may lack System32/PATH entries) */
+/** absolute npm.cmd path when findable (the service host env may lack System32/nodejs in PATH) */
 function npmCmdPath(): string {
   if (cachedNpmCmd !== undefined) return cachedNpmCmd
   cachedNpmCmd = "npm.cmd"
   try {
+    const candidates: string[] = []
     for (const dir of (process.env.PATH ?? "").split(";")) {
-      if (!dir) continue
-      const candidate = join(dir, "npm.cmd")
-      if (existsSync(candidate)) {
-        cachedNpmCmd = candidate
-        break
-      }
+      if (dir) candidates.push(join(dir, "npm.cmd"))
+    }
+    // well-known install locations (nodejs ships node.exe next to npm.cmd, so a stripped PATH is fine)
+    const pf = process.env.ProgramFiles ?? "C:\\Program Files"
+    const local = process.env.LOCALAPPDATA ?? ""
+    const roaming = process.env.APPDATA ?? ""
+    candidates.push(join(pf, "nodejs", "npm.cmd"))
+    if (local) candidates.push(join(local, "Programs", "nodejs", "npm.cmd"))
+    if (roaming) candidates.push(join(roaming, "npm", "npm.cmd"))
+    for (const candidate of candidates) {
+      try {
+        if (existsSync(candidate)) {
+          cachedNpmCmd = candidate
+          break
+        }
+      } catch {}
     }
   } catch {}
   return cachedNpmCmd
@@ -243,10 +254,22 @@ function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void
           } catch {}
         }, POST_AUDIT_TIMEOUT_MS)
         killer.unref?.()
-        child.on("close", () => {
+        child.on("close", (code: number | null) => {
           try {
             closed = true
             clearTimeout(killer)
+            if (!stdout.trim()) {
+              // visibility: the audit ran but produced nothing (broken runner env, missing npm, ...)
+              audit(cfg, {
+                ts: new Date().toISOString(),
+                kind: "deps",
+                categories: ["audit-error"],
+                count: 1,
+                action: "warn",
+                detail: `empty stdout, code=${code}, bun=${"bun" in process.versions}, runner=${runner.cmd}`,
+              })
+              return
+            }
             // partial JSON after a forced kill simply fails to parse — dropped, by design
             const report = parseAuditReport(stdout)
             if (!report || report.total === 0) return
