@@ -86,7 +86,7 @@ OpenCode installs the npm package automatically on startup. Then `opencode servi
 
 ```bash
 npm install
-npm test          # node --test (42 tests)
+npm test          # node --test (111 tests)
 npm run typecheck # tsc --noEmit
 ```
 
@@ -99,7 +99,7 @@ The OpenCode server watches `src/**` and reloads the plugin on save — no servi
 **After changes, make sure nothing broke:**
 
 ```bash
-npm test   # expect: pass 42, fail 0
+npm test   # expect: pass 111, fail 0
 ```
 
 **If anything misbehaves (plugin failed to load, config changed outside the watched files):**
@@ -210,7 +210,7 @@ OpenCode сам установит npm-пакет при старте. Зате�
 
 ```bash
 npm install
-npm test          # node --test (52 теста)
+npm test          # node --test (111 тестов)
 npm run typecheck # tsc --noEmit
 ```
 
@@ -220,7 +220,7 @@ npm run typecheck # tsc --noEmit
 
 **Правки кода:** сохранил файл — сервер сам перезагрузил плагин (file watcher). Никаких команд не требуется.
 
-**Проверка, что не сломано:** `npm test` — ожидается `pass 42, fail 0`.
+**Проверка, что не сломано:** `npm test` — ожидается `pass 111, fail 0`.
 
 **Если что-то пошло не так (плагин не загрузился, правки вне зоны watcher'а):** `opencode service restart` — эта одна команда универсальный «сброс/апдейт».
 
