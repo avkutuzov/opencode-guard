@@ -50,8 +50,9 @@ Scoped: `@scope/pkg@1.0.0` парсится корректно (последни
 npm audit работает по npm-lockfile; yarn/pnpm — gap) и `postAudit` (default true) —
 через 60 сек (эвристика: install успеет завершиться) отсоединённо запускаем
 `npm audit --json` в `event.cwd` (timeout 120s, stdio pipe, ошибки глотаем).
-Результат: `parseAuditReport(json)` агрегирует по severity (v2: `auditReport.vulnerabilities`,
-v1: `advisories`; неизвестные severity → `unknown` — блокирует `__proto__`-строки). Находки → аудит
+Результат: `parseAuditReport(json)` агрегирует по severity (npm ≥11: top-level `vulnerabilities`;
+v2: `auditReport.vulnerabilities`; v1: `advisories`; неизвестные severity → `unknown` — блокирует
+`__proto__`-строки). Находки → аудит
 `{"kind":"deps","categories":["audit-vulnerability"],"count":N,"action":"warn",severities:{...}}`
 + console.warn. Блокировать постфактум нельзя — это детекция уже установленного.
 Планируется и для пропущенных команд в warn-режиме (install выполнился — самый опасный класс).

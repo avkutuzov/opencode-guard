@@ -397,9 +397,13 @@ export function parseAuditReport(text: string): AuditSummary | null {
   if (typeof json !== "object" || json === null) return null
   const obj = json as Record<string, unknown>
   const sources: unknown[] = []
+  // npm >= 11: top-level `vulnerabilities` (auditReportVersion 3)
+  sources.push(obj.vulnerabilities)
+  // older v2 shape
   if (typeof obj.auditReport === "object" && obj.auditReport !== null) {
     sources.push((obj.auditReport as Record<string, unknown>).vulnerabilities)
   }
+  // v1 shape
   if (typeof obj.advisories === "object" && obj.advisories !== null) {
     sources.push(obj.advisories)
   }

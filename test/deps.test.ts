@@ -347,6 +347,19 @@ test("parseAuditReport: v1 shape, garbage and empty report", () => {
   })
 })
 
+test("parseAuditReport: npm>=11 top-level vulnerabilities shape", () => {
+  const v3 = {
+    auditReportVersion: 3,
+    vulnerabilities: {
+      lodash: { name: "lodash", severity: "critical", isDirect: true, via: [{}] },
+      json5: { name: "json5", severity: "high", isDirect: false, via: [{}] },
+    },
+    metadata: { vulnerabilities: { total: 2 } },
+  }
+  const r = parseAuditReport(JSON.stringify(v3))
+  assert.deepEqual(r, { total: 2, severities: { critical: 1, high: 1 } })
+})
+
 // --- review pass 1 regressions (phase 2.5) ---
 
 test("M-2: pnpx (pnpm <=6 executor) is recognized", () => {
