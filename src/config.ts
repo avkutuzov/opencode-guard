@@ -13,6 +13,8 @@ export interface GuardConfig {
   exemptSkills: string[]
   /** intercept package installation commands (blocklist + typosquat) */
   depsCheck: boolean
+  /** run `npm audit --json` ~60s after an allowed npm install (warn-only detection) */
+  postAudit: boolean
   /** extra package names blocked from installation (union with built-in list) */
   blockedPackages: string[]
   /** package names exempted from the blocklist (escape hatch for legit installs) */
@@ -67,6 +69,7 @@ export function resolveConfig(options: unknown): GuardConfig {
     scanSkillsOnLoad: o.scanSkillsOnLoad !== false,
     exemptSkills: strArray(o.exemptSkills) ? [...o.exemptSkills] : [],
     depsCheck: o.depsCheck !== false,
+    postAudit: o.postAudit !== false,
     blockedPackages: strArray(o.blockedPackages) ? [...o.blockedPackages] : [],
     allowedPackages: strArray(o.allowedPackages) ? [...o.allowedPackages] : [],
     blockPaths: strArray(o.blockPaths) ? [...new Set([...DEFAULT_BLOCK_PATHS, ...o.blockPaths])] : [...DEFAULT_BLOCK_PATHS],

@@ -12,19 +12,20 @@ export interface InstallPackage {
 }
 
 export interface InstallTarget {
-  manager: "npm" | "yarn" | "pnpm" | "pip" | "cargo"
+  manager: "npm" | "yarn" | "pnpm" | "pip" | "cargo" | "npx" | "bun"
   packages: InstallPackage[]
 }
 
-const MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "cargo"])
+const MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "cargo", "npx", "pnpx", "bun", "bunx"])
 
 const SUBCOMMANDS: Record<string, readonly string[]> = {
   npm: ["install", "i"],
-  yarn: ["add"],
-  pnpm: ["add", "install"],
+  yarn: ["add", "dlx"],
+  pnpm: ["add", "install", "dlx"],
   pip: ["install"],
   pip3: ["install"],
   cargo: ["add"],
+  bun: ["add", "install", "x"],
 }
 
 /** flags that consume the NEXT token as their operand (never a package name) */
@@ -45,6 +46,71 @@ export const BLOCKED_PACKAGES: ReadonlySet<string> = new Set([
   "coa", // 2021: hijack, script-based payload
   "rc", // 2021: hijack, same campaign as coa
 ])
+
+/** affix squatting: trusted + short dictionary affix, with or without a dash (npm-only check) */
+const AFFIX_SUFFIXES = ["js", "ts", "node", "cli", "dev", "-js", "-ts", "-node", "-cli", "-dev"] as const
+const AFFIX_PREFIXES = ["node-", "nodejs-"] as const
+/** historical legit names that would otherwise match the affix rule */
+const AFFIX_ALLOWLIST: ReadonlySet<string> = new Set(["angularjs", "reactjs", "vuejs", "expressjs", "nodejs", "vue-cli", "angular-cli"])
+
+/** git/url install specs are not registry names — never flag them */
+function isGitOrUrlSpec(token: string): boolean {
+  return (
+    /:\/\//.test(token) ||
+    /^(?:git@|github:|gitlab:|bitbucket:|gist:)/.test(token) ||
+    /\.(?:tgz|tar\.gz|zip)$/i.test(token)
+  )
+}
+
+/** split name@version on the LAST '@' (respects scoped names: @scope/pkg@1.0.0) */
+function splitNameVersion(entry: string): { name: string; version?: string } {
+  const at = entry.lastIndexOf("@")
+  if (at > 0) return { name: entry.slice(0, at), version: entry.slice(at + 1) || undefined }
+  return { name: entry }
+}
+
+/**
+ * npx / pnpm dlx / yarn dlx: the executed package is a positional token, not an install operand.
+ * Flags skipped; -p/--package operands ARE packages; everything after `--` is the command's args.
+ */
+function parseExecTokens(tokens: string[], start: number): InstallTarget | null {
+  const packages: InstallPackage[] = []
+  let positionalTaken = false
+  let ignorePositional = false
+  for (let j = start; j < tokens.length; j++) {
+    const t = tokens[j]
+    if (t === "--") break // rest belongs to the executed command
+    if (t.startsWith("-")) {
+      if (t === "-p" || t === "--package") {
+        const next = tokens[++j]
+        if (next && !isGitOrUrlSpec(next)) packages.push(splitNameVersion(next))
+        continue
+      }
+      if (t.startsWith("-p=")) {
+        const v = t.slice(3)
+        if (v && !isGitOrUrlSpec(v)) packages.push(splitNameVersion(v))
+        continue
+      }
+      if (t.startsWith("--package=")) {
+        const v = t.slice("--package=".length)
+        if (v && !isGitOrUrlSpec(v)) packages.push(splitNameVersion(v))
+        continue
+      }
+      if (t === "-c" || t === "--call") {
+        j++ // consume the shell string
+        ignorePositional = true
+        continue
+      }
+      continue
+    }
+    if (!positionalTaken && !ignorePositional && !isGitOrUrlSpec(t)) {
+      packages.push(splitNameVersion(t))
+      positionalTaken = true
+    }
+  }
+  if (packages.length === 0) return null
+  return { manager: "npx", packages }
+}
 
 /** curated popular npm names for typosquat distance-1 checks (119 unique) */
 export const TRUSTED_TOP: ReadonlySet<string> = new Set([
@@ -98,15 +164,34 @@ function parseSegment(segment: string): InstallTarget | null {
   // Windows runners: npm.cmd, pnpm.cmd, pip.exe, yarn.ps1, ... — strip the script/extension suffix
   const raw = tokens[i]
   if (!raw) return null
-  const manager = raw.replace(/\.(?:cmd|ps1|exe|bat)$/i, "")
+  const manager = raw.replace(/\.(?:cmd|ps1|exe|bat)$/i, "").toLowerCase()
   if (!MANAGERS.has(manager)) return null
-  const sub = tokens[i + 1]
+  // execution-without-install forms: npx/pnpx/bunx pkg / pnpm|yarn dlx / bun x
+  if (manager === "npx" || manager === "pnpx" || manager === "bunx") return parseExecTokens(tokens, i + 1)
+  if ((manager === "pnpm" || manager === "yarn") && tokens[i + 1]?.toLowerCase() === "dlx") {
+    return parseExecTokens(tokens, i + 2)
+  }
+  if (manager === "bun" && tokens[i + 1]?.toLowerCase() === "x") {
+    return parseExecTokens(tokens, i + 2)
+  }
+  // global flags may precede the subcommand: npm --prefix . install pkg / yarn --cwd p add pkg
+  const takesArgEarly = FLAG_TAKES_ARG[manager]
+  let k = i + 1
+  let globalFlag = false
+  while (k < tokens.length && tokens[k].startsWith("-")) {
+    const flag = tokens[k]
+    if (flag === "-g" || flag === "--global") globalFlag = true
+    k++
+    if (takesArgEarly?.has(flag) && k < tokens.length) k++ // consume the flag's operand
+  }
+  if (globalFlag) return null
+  const sub = tokens[k]?.toLowerCase()
   if (!SUBCOMMANDS[manager]?.includes(sub)) return null
-  if (manager === "yarn" && tokens[i + 2] === "global") return null
+  if (manager === "yarn" && tokens[k + 1]?.toLowerCase() === "global") return null
 
   const takesArg = FLAG_TAKES_ARG[manager]
   const packages: InstallPackage[] = []
-  for (let j = i + 2; j < tokens.length; j++) {
+  for (let j = k + 1; j < tokens.length; j++) {
     const t = tokens[j]
     if (t.startsWith("-")) {
       if (t === "-g" || t === "--global") return null
@@ -118,13 +203,18 @@ function parseSegment(segment: string): InstallTarget | null {
     if (manager === "pip" || manager === "pip3") {
       const m = /^([^=<>~!]+?)([=<>~!].*)?$/.exec(t)
       if (!m || !m[1]) continue
-      name = m[1]
+      name = m[1].replace(/\[[^\]]*\]$/, "") // extras: event-stream[socks] -> event-stream
       version = m[2] ? m[2].replace(/^[=<>~!]+/, "") : undefined
     } else {
       const at = t.lastIndexOf("@")
       if (at > 0) {
         name = t.slice(0, at)
         version = t.slice(at + 1)
+        // npm alias: alias@npm:event-stream actually installs event-stream
+        if (version.startsWith("npm:") && version.length > 4) {
+          name = version.slice(4)
+          version = undefined
+        }
       }
     }
     if (!name) continue
@@ -140,7 +230,7 @@ function parseSegment(segment: string): InstallTarget | null {
  */
 export function parseSegments(command: string): InstallTarget[] {
   const out: InstallTarget[] = []
-  for (const segment of command.split(/&&|\|\||[;|]|\n/)) {
+  for (const segment of command.split(/&&|\|\||[;|&]|\n/)) {
     const hit = parseSegment(segment)
     if (hit) out.push(hit)
   }
@@ -181,11 +271,37 @@ export function levenshtein(a: string, b: string): number {
 /** returns the trusted name this package is squatting, or null (case-insensitive) */
 export function isTyposquat(name: string): string | null {
   const n = name.toLowerCase()
-  if (n.startsWith("@") || n.length < 4) return null
+  if (n.length < 4) return null
+  // scoped: only @types/* is checked (arbitrary scopes need an official-scope list — phase 3)
+  if (n.startsWith("@")) {
+    if (!n.startsWith("@types/")) return null
+    const base = n.slice("@types/".length)
+    if (TRUSTED_TOP.has(base)) return null
+    for (const trusted of TRUSTED_TOP) {
+      if (Math.abs(trusted.length - base.length) > 1) continue
+      if (levenshtein(base, trusted) === 1) return trusted
+    }
+    return null
+  }
   if (TRUSTED_TOP.has(n)) return null
   for (const trusted of TRUSTED_TOP) {
     if (Math.abs(trusted.length - n.length) > 1) continue
     if (levenshtein(n, trusted) === 1) return trusted
+  }
+  return null
+}
+
+/** affix squatting: lodashjs / node-lodash / react-cli — trusted + dictionary affix */
+export function isAffixSquat(name: string): string | null {
+  const n = name.toLowerCase()
+  if (TRUSTED_TOP.has(n) || AFFIX_ALLOWLIST.has(n)) return null
+  for (const trusted of TRUSTED_TOP) {
+    for (const suffix of AFFIX_SUFFIXES) {
+      if (n === trusted + suffix) return trusted
+    }
+    for (const prefix of AFFIX_PREFIXES) {
+      if (n === prefix + trusted) return trusted
+    }
   }
   return null
 }
@@ -198,24 +314,56 @@ export interface DepsVerdict {
 
 /**
  * Check a raw shell command; returns the first violation or null.
- * extraBlocked: user names added to the blocklist; allowed: user names exempted from it.
+ * extraBlocked/allowed entries: plain "name" (all versions) or "name@version" (that version only).
  */
 export function checkInstall(command: string, extraBlocked: readonly string[] = [], allowed: readonly string[] = []): DepsVerdict | null {
   const targets = parseSegments(command)
   if (targets.length === 0) return null
-  const ok = new Set(allowed.map((p) => p.toLowerCase()))
-  const blocked = new Set([...BLOCKED_PACKAGES, ...extraBlocked].map((p) => p.toLowerCase()))
+
+  const allowedWide = new Set<string>()
+  const allowedVer = new Set<string>() // "name@version", lowercased
+  for (const e of allowed) {
+    const { name, version } = splitNameVersion(e)
+    const l = name.toLowerCase()
+    if (version) allowedVer.add(l + "@" + version.toLowerCase())
+    else allowedWide.add(l)
+  }
+
+  const blockedWide = new Set<string>()
+  const blockedVer = new Map<string, Set<string>>()
+  for (const e of [...BLOCKED_PACKAGES, ...extraBlocked]) {
+    const { name, version } = splitNameVersion(e)
+    const l = name.toLowerCase()
+    if (version) {
+      const s = blockedVer.get(l) ?? new Set<string>()
+      s.add(version.toLowerCase())
+      blockedVer.set(l, s)
+    } else {
+      blockedWide.add(l)
+    }
+  }
+
+  const npmish = new Set(["npm", "yarn", "pnpm", "npx", "bun"])
   for (const target of targets) {
-    const npmish = target.manager === "npm" || target.manager === "yarn" || target.manager === "pnpm"
     for (const pkg of target.packages) {
       const lower = pkg.name.toLowerCase()
-      if (ok.has(lower)) continue
-      if (blocked.has(lower)) {
+      const ver = pkg.version ? pkg.version.toLowerCase() : undefined
+      if (allowedWide.has(lower)) continue
+      // a versioned allow entry must NOT lift a name-wide block (spec: it lifts only versioned blocks)
+      if (blockedWide.has(lower)) {
         return { name: pkg.name, reason: "blocklist" }
       }
-      // squat check is npm-only: other ecosystems reuse the same names legitimately (pip "requests" vs npm "request")
-      if (npmish) {
-        const squat = isTyposquat(pkg.name)
+      if (ver && allowedVer.has(lower + "@" + ver)) continue
+      if (ver) {
+        const s = blockedVer.get(lower)
+        if (s?.has(ver)) {
+          return { name: pkg.name, reason: "blocklist" }
+        }
+      }
+      // squat checks are npm-ecosystem-only: other ecosystems reuse the same names legitimately (pip "requests" vs npm "request")
+      if (npmish.has(target.manager)) {
+        // affix first: "lodash-js" is affix of lodash (exact form), not a dist-1 edit of lodash-es
+        const squat = isAffixSquat(pkg.name) ?? isTyposquat(pkg.name)
         if (squat) {
           return { name: pkg.name, reason: "typosquat", target: squat }
         }
@@ -223,4 +371,50 @@ export function checkInstall(command: string, extraBlocked: readonly string[] = 
     }
   }
   return null
+}
+
+/** true if any segment is an npm install (drives the post-audit scheduler; npx/dlx don't count) */
+export function isNpmInstall(command: string): boolean {
+  return parseSegments(command).some((t) => t.manager === "npm")
+}
+
+export interface AuditSummary {
+  total: number
+  severities: Record<string, number>
+}
+
+/** npm audit severity vocabulary; anything else folds into "unknown" (blocks __proto__-style key damage) */
+const SEVERITY_NAMES = new Set(["info", "low", "moderate", "high", "critical"])
+
+/** aggregate `npm audit --json` output (v2 auditReport.vulnerabilities or v1 advisories); null if unusable */
+export function parseAuditReport(text: string): AuditSummary | null {
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof json !== "object" || json === null) return null
+  const obj = json as Record<string, unknown>
+  const sources: unknown[] = []
+  if (typeof obj.auditReport === "object" && obj.auditReport !== null) {
+    sources.push((obj.auditReport as Record<string, unknown>).vulnerabilities)
+  }
+  if (typeof obj.advisories === "object" && obj.advisories !== null) {
+    sources.push(obj.advisories)
+  }
+  const found = sources.filter((s) => typeof s === "object" && s !== null && !Array.isArray(s))
+  if (found.length === 0) return null
+  const severities: Record<string, number> = {}
+  let total = 0
+  for (const s of found) {
+    for (const entry of Object.values(s as Record<string, unknown>)) {
+      if (typeof entry !== "object" || entry === null) continue
+      const sev = (entry as Record<string, unknown>).severity
+      const key = typeof sev === "string" && SEVERITY_NAMES.has(sev) ? sev : "unknown"
+      severities[key] = (severities[key] ?? 0) + 1
+      total++
+    }
+  }
+  return { total, severities }
 }

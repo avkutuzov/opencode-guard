@@ -18,7 +18,16 @@ Audit: JSONL at `~/.local/share/opencode/guard/guard-audit.jsonl` — categories
 
 ## Dependency installation guard
 
-`npm/pnpm/yarn add`, `pip install`, `cargo add` are parsed before execution (phase 2): a built-in blocklist of known-malicious packages (event-stream, node-ipc, ua-parser-js, coa, rc, flatmap-stream) vetoes the install, and names at Levenshtein distance 1 from a curated top-120 npm list are flagged as typosquats (npm only — other ecosystems reuse the same names legitimately). Global installs (`-g`) are out of scope. Post-install auditing (npm audit / OSV) is planned for phase 2.5.
+`npm/pnpm/yarn add`, `pip install`, `cargo add` are parsed before execution (phase 2): a built-in blocklist of known-malicious packages (event-stream, node-ipc, ua-parser-js, coa, rc, flatmap-stream) vetoes the install, and names at Levenshtein distance 1 from a curated top-120 npm list are flagged as typosquats (npm only — other ecosystems reuse the same names legitimately). Global installs (`-g`) are out of scope.
+
+Phase 2.5 additions:
+
+- `npx pkg`, `pnpm dlx`, `yarn dlx` are checked the same way (execution without install)
+- `@types/*` scoped squatting (`@types/lodahs` → veto), affix squatting (`lodashjs`, `node-lodash`, `react-cli`)
+- `blockedPackages`/`allowedPackages` accept `name@version` (blocks only that version; plain `name` covers all versions)
+- post-audit: ~60s after an allowed npm install, `npm audit --json` runs in the project directory; findings are warn-only audit entries (`postAudit`, default on)
+
+Known gaps: `npm exec` is not parsed; `npx -c "<string>"` contents are not scanned; versioned entries match literally (`rc@1.2.0` does not catch `rc@^1.2.0` or `rc@latest` unless written exactly); post-audit is npm-only (no yarn/pnpm audit) and its 120s timeout is enforced via `taskkill` on Windows (best-effort elsewhere); a forced-kill partial report is dropped; `corepack <pm> ...` indirection and command substitution (`$(npm i x)`) are not expanded.
 
 ## Detection (29 patterns)
 
@@ -67,6 +76,7 @@ OpenCode installs the npm package automatically on startup. Then `opencode servi
 | `scanOutbound` | `true` | scrub outbound context |
 | `scanSkillsOnLoad` | `true` | scan installed skills at startup (warn-only audit) |
 | `depsCheck` | `true` | intercept package installs (blocklist + typosquat) |
+| `postAudit` | `true` | npm audit ~60s after an allowed npm install (warn-only) |
 | `blockedPackages` | `[]` | extra package names blocked from install (union) |
 | `allowedPackages` | `[]` | names exempted from the blocklist (escape hatch) |
 | `blockPaths` | built-in list | **added** to defaults (union) |
@@ -140,7 +150,16 @@ opencode service restart
 
 ## Защита установки зависимостей
 
-`npm/pnpm/yarn add`, `pip install`, `cargo add` парсятся до исполнения (фаза 2): встроенный blocklist известных вредоносных пакетов (event-stream, node-ipc, ua-parser-js, coa, rc, flatmap-stream) блокирует установку, а имена на расстоянии Левенштейна 1 от топ-120 npm ловятся как typosquat (только npm — в других экосистемах те же имена легитимны). Глобальные установки (`-g`) вне зоны охвата. Пост-аудит (npm audit / OSV) — фаза 2.5.
+`npm/pnpm/yarn add`, `pip install`, `cargo add` парсятся до исполнения (фаза 2): встроенный blocklist известных вредоносных пакетов (event-stream, node-ipc, ua-parser-js, coa, rc, flatmap-stream) блокирует установку, а имена на расстоянии Левенштейна 1 от топ-120 npm ловятся как typosquat (только npm — в других экосистемах те же имена легитимны). Глобальные установки (`-g`) вне зоны охвата.
+
+Добавления фазы 2.5:
+
+- `npx pkg`, `pnpm dlx`, `yarn dlx` проверяются так же (исполнение без install)
+- scoped-сквоттинг `@types/*` (`@types/lodahs` → вето), affix-сквоттинг (`lodashjs`, `node-lodash`, `react-cli`)
+- `blockedPackages`/`allowedPackages` принимают `name@version` (блокирует только эту версию; голое `name` — все версии)
+- пост-аудит: через ~60 секунд после пропущенной npm-установки в каталоге проекта запускается `npm audit --json`; находки пишутся в аудит как warn (`postAudit`, по умолчанию включён)
+
+Известные пробелы: `npm exec` не парсится; содержимое `npx -c "<строка>"` не сканируется; версионные записи сопоставляются литерально (`rc@1.2.0` не поймает `rc@^1.2.0` или `rc@latest`, если записано иначе); пост-аудит только для npm (yarn/pnpm — нет), таймаут 120s на Windows исполняется через `taskkill` (best-effort), оборванный принудительным kill отчёт отбрасывается; косвенность `corepack <pm> ...` и подстановка команд (`$(npm i x)`) не раскрываются.
 
 ## Детекция (29 паттернов)
 
@@ -190,6 +209,7 @@ OpenCode сам установит npm-пакет при старте. Зате�
 | `scanOutbound` | `true` | скраб исходящего контекста |
 | `scanSkillsOnLoad` | `true` | стартовый скан установленных скиллов (только warn-аудит) |
 | `depsCheck` | `true` | перехват установки пакетов (blocklist + typosquat) |
+| `postAudit` | `true` | npm audit через ~60с после пропущенной npm-установки (только warn) |
 | `blockedPackages` | `[]` | дополнительные запрещённые имена пакетов (union) |
 | `allowedPackages` | `[]` | имена, снятые с блоклиста (обход ложных срабатываний) |
 | `blockPaths` | дефолтный список | **добавляется** к дефолтам (union) |

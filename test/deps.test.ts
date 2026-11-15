@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { parseInstallCommand, levenshtein, isTyposquat, checkInstall, BLOCKED_PACKAGES } from "../src/deps.ts"
+import { parseInstallCommand, levenshtein, isTyposquat, checkInstall, parseAuditReport, BLOCKED_PACKAGES } from "../src/deps.ts"
 import { resolveConfig } from "../src/config.ts"
 
 // --- parseInstallCommand ---
@@ -171,13 +171,15 @@ test("quoted and local/git specs are handled", () => {
   assert.equal(checkInstall("npm install ../event-stream"), null)
 })
 
-test("known gaps pinned: dry-run blocked, npx not covered, scoped squat not covered", () => {
+test("known gaps pinned: dry-run blocked; npx and @types covered since 2.5; arbitrary scopes remain", () => {
   // --dry-run still blocks (nothing installs, but we keep it simple and safe)
   assert.equal(checkInstall("npm install lodahs --dry-run")?.reason, "typosquat")
-  // npx executes packages without install — phase 2.5
-  assert.equal(checkInstall("npx lodahs"), null)
-  // scoped names are not squat-checked — phase 2.5
-  assert.equal(checkInstall("npm i @types/lodahs"), null)
+  // npx executes packages without install — covered since phase 2.5
+  assert.equal(checkInstall("npx lodahs")?.reason, "typosquat")
+  // @types scoped names squat-checked since phase 2.5
+  assert.equal(checkInstall("npm i @types/lodahs")?.reason, "typosquat")
+  // arbitrary scoped names are still not squat-checked — phase 3
+  assert.equal(checkInstall("npm i @scope/lodahs"), null)
 })
 
 test("allowedPackages exempts from the blocklist", () => {
@@ -201,4 +203,276 @@ test("Windows: npm.cmd / pnpm.cmd / yarn.cmd / pip.exe are recognized as manager
   assert.equal(checkInstall("pip.exe install event-stream")?.reason, "blocklist")
   assert.equal(checkInstall("npm.cmd install lodash"), null)
   assert.equal(checkInstall("npm.cmd test"), null)
+})
+
+// --- phase 2.5: npx / dlx interception ---
+
+test("npx: positional package is checked (squat + blocklist)", () => {
+  assert.equal(checkInstall("npx lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("npx lodahs")?.target, "lodash")
+  assert.equal(checkInstall("npx -y lodahs@1.2.3")?.reason, "typosquat")
+  assert.equal(checkInstall("npx --yes event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("npx lodash"), null)
+  assert.equal(checkInstall("npx node script.js"), null) // system binary, not a squat
+})
+
+test("npx: -p/--package operands are packages", () => {
+  assert.equal(checkInstall("npx -p event-stream node x.js")?.reason, "blocklist")
+  assert.equal(checkInstall("npx -p lodahs somebin")?.reason, "typosquat")
+  assert.equal(checkInstall("npx --package lodash node x.js"), null)
+})
+
+test("npx: tokens after -- are command args, not packages", () => {
+  assert.equal(checkInstall("npx -- lodahs"), null)
+  assert.equal(checkInstall("npx -y -- lodahs@1.0.0"), null)
+})
+
+test("npx: windows suffix and git specs", () => {
+  assert.equal(checkInstall("npx.cmd lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("npx github:user/repo"), null)
+  assert.equal(checkInstall("npx https://evil.example/pkg.tgz"), null)
+})
+
+test("dlx: pnpm/yarn dlx checked", () => {
+  assert.equal(checkInstall("pnpm dlx lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("yarn dlx event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("pnpm dlx lodash"), null)
+  assert.equal(checkInstall("pnpm.cmd dlx lodahs")?.reason, "typosquat")
+})
+
+// --- phase 2.5: @types scoped squatting ---
+
+test("@types scoped squat: basename distance-1 to a top name", () => {
+  assert.equal(checkInstall("npm i @types/lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("npm i @types/lodahs")?.target, "lodash")
+  assert.equal(checkInstall("npm i @types/reactt")?.target, "react")
+})
+
+test("@types scoped squat: exact and foreign scopes untouched", () => {
+  assert.equal(checkInstall("npm i @types/lodash"), null)
+  assert.equal(checkInstall("npm i @types/react"), null)
+  assert.equal(checkInstall("npm i @scope/lodahs"), null) // arbitrary scopes: phase 3
+  assert.equal(checkInstall("npm i @types/lodash-es"), null) // trusted basename
+})
+
+// --- phase 2.5: affix squatting ---
+
+test("affix squat: trusted + dictionary affix", () => {
+  assert.equal(checkInstall("npm i lodashjs")?.target, "lodash")
+  assert.equal(checkInstall("npm i node-lodash")?.target, "lodash")
+  assert.equal(checkInstall("npm i react-cli")?.target, "react")
+  assert.equal(checkInstall("npm i axiosjs")?.target, "axios")
+  assert.equal(checkInstall("npm i lodash-js")?.target, "lodash")
+})
+
+test("affix squat: allowlist and trusted names untouched", () => {
+  assert.equal(checkInstall("npm i angularjs"), null)
+  assert.equal(checkInstall("npm i reactjs"), null)
+  assert.equal(checkInstall("npm i vuejs"), null)
+  assert.equal(checkInstall("npm i expressjs"), null)
+  assert.equal(checkInstall("npm i nodejs"), null)
+  assert.equal(checkInstall("npm i lodash-es"), null) // in TRUSTED_TOP itself
+  assert.equal(checkInstall("npm i nodemailer"), null) // not an affix of a trusted name
+  assert.equal(checkInstall("npm i mongoose"), null) // contains 'mongo'? not trusted; dist check only
+  assert.equal(checkInstall("npm i vue-cli"), null) // official legacy Vue CLI (allowlist)
+  assert.equal(checkInstall("npm i angular-cli"), null) // official legacy Angular CLI (allowlist)
+})
+
+// --- phase 2.5: versioned blocklist ---
+
+test("versioned blocklist: name@version blocks only that version", () => {
+  // colors is NOT in the built-in name-wide list — clean fixture for versioned-only blocking
+  const blocked = ["colors@1.4.44"]
+  assert.equal(checkInstall("npm i colors@1.4.44", blocked)?.reason, "blocklist")
+  assert.equal(checkInstall("npm i colors", blocked), null)
+  assert.equal(checkInstall("npm i colors@1.4.0", blocked), null)
+  assert.equal(checkInstall("npm i colors@1.4.44 --save-dev", blocked)?.reason, "blocklist")
+})
+
+test("versioned blocklist: scoped and case-insensitive", () => {
+  const blocked = ["@Scope/Pkg@1.0.0"]
+  assert.equal(checkInstall("npm i @scope/pkg@1.0.0", blocked)?.reason, "blocklist")
+  assert.equal(checkInstall("npm i @scope/pkg@1.0.1", blocked), null)
+  assert.equal(checkInstall("npm i @scope/pkg", blocked), null)
+})
+
+test("versioned allow: wide allow lifts everything; versioned allow lifts only versioned blocks", () => {
+  // colors is not built-in blocked — clean fixture
+  assert.equal(checkInstall("npm i colors@1.4.44", ["colors@1.4.44"], ["colors"]), null)
+  assert.equal(checkInstall("npm i colors@1.4.44", ["colors@1.4.44"], ["colors@1.4.44"]), null)
+  // M-1: versioned allow must NOT lift a NAME-WIDE block (rc is blocked wide by the built-in list)
+  assert.equal(checkInstall("npm i rc@1.2.9", ["rc@1.2.9"], ["rc@1.2.9"])?.reason, "blocklist")
+  assert.equal(
+    checkInstall("npm i colors@1.4.44", ["colors", "colors@1.4.44"], ["colors@1.4.44"])?.reason,
+    "blocklist"
+  )
+  // wide allow still lifts everything for that name
+  assert.equal(checkInstall("npm i rc@1.2.9", [], ["rc"]), null)
+})
+
+// --- phase 2.5: parseAuditReport ---
+
+const AUDIT_V2 = {
+  auditReport: {
+    vulnerabilities: {
+      "some-pkg": { severity: "critical", via: [{}] },
+      "other-pkg": { severity: "critical", via: [{}] },
+      "third-pkg": { severity: "high", via: [{}] },
+    },
+  },
+}
+
+const AUDIT_V1 = {
+  advisories: {
+    "101": { severity: "high" },
+    "102": { severity: "moderate" },
+  },
+}
+
+test("parseAuditReport: v2 shape aggregated by severity", () => {
+  const r = parseAuditReport(JSON.stringify(AUDIT_V2))
+  assert.deepEqual(r, { total: 3, severities: { critical: 2, high: 1 } })
+})
+
+test("parseAuditReport: v1 shape, garbage and empty report", () => {
+  assert.deepEqual(parseAuditReport(JSON.stringify(AUDIT_V1)), {
+    total: 2,
+    severities: { high: 1, moderate: 1 },
+  })
+  assert.equal(parseAuditReport("not json"), null)
+  assert.equal(parseAuditReport("{}"), null)
+  assert.deepEqual(parseAuditReport(JSON.stringify({ auditReport: { vulnerabilities: {} } })), {
+    total: 0,
+    severities: {},
+  })
+})
+
+// --- review pass 1 regressions (phase 2.5) ---
+
+test("M-2: pnpx (pnpm <=6 executor) is recognized", () => {
+  assert.equal(checkInstall("pnpx lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("pnpx.cmd lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("pnpx lodash"), null)
+})
+
+test("npx forms: --package=, multiple -p, empty, -c", () => {
+  assert.equal(checkInstall("npx --package=lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("npx -p lodahs -p event-stream run")?.reason, "typosquat")
+  assert.equal(checkInstall("npx -y"), null)
+  assert.equal(checkInstall("npx -c \"echo hi\""), null)
+  assert.equal(checkInstall("npx -p lodash -c \"echo hi\""), null)
+  assert.equal(checkInstall("npx -y -p lodash create-vite app"), null)
+  assert.equal(checkInstall("npx pkg@1.2.3 --flag value"), null)
+})
+
+test("m-5: hostile severity strings fold into unknown", () => {
+  const bad = {
+    auditReport: {
+      vulnerabilities: {
+        a: { severity: "__proto__" },
+        b: { severity: "constructor" },
+        c: { severity: "critical" },
+      },
+    },
+  }
+  const r = parseAuditReport(JSON.stringify(bad))
+  assert.equal(r?.total, 3)
+  assert.equal(Object.prototype.hasOwnProperty.call(r?.severities ?? {}, "__proto__"), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(r?.severities ?? {}, "constructor"), false)
+  assert.equal(r?.severities.unknown, 2)
+  assert.equal(r?.severities.critical, 1)
+})
+
+test("m-9: versioned blocklist matching is literal", () => {
+  const blocked = ["colors@latest"]
+  assert.equal(checkInstall("npm i colors@latest", blocked)?.reason, "blocklist")
+  assert.equal(checkInstall("npm i colors@1.2.0", blocked), null)
+  // no semver interpretation: ^1.2.0 does not match a 1.2.0 entry
+  assert.equal(checkInstall("npm i colors@^1.4.0", ["colors@1.4.0"]), null)
+})
+
+test("splitNameVersion edges: empty version is wide, double-@ splits on the last one", () => {
+  // "rc@" — empty version parses as the wide name on both sides: consistent, blocks
+  assert.equal(checkInstall("npm i rc", ["rc@"])?.reason, "blocklist")
+  // symmetric with an odd install token: <REDACTED:credential> pkg@1.2.3, version garbage
+  assert.equal(checkInstall("npm i pkg@1.2.3@garbage", ["pkg@1.2.3@garbage"])?.reason, "blocklist")
+})
+
+test("affix FP regression set: real npm names stay clean", () => {
+  for (const name of [
+    "fs-extra", "cross-env", "chart.js", "core-js", "react-dom", "socket.io",
+    "axios-retry", "whatwg-fetch", "node-fetch", "vue-router", "nodemailer", "date-fns",
+  ]) {
+    assert.equal(checkInstall(`npm i ${name}`), null, `${name} must be clean`)
+  }
+})
+
+test("m-8 pinned: pnpm dlx --package=x is treated as a package (conservative)", () => {
+  assert.equal(checkInstall("pnpm dlx --package=lodahs run")?.reason, "typosquat")
+})
+
+test("isNpmInstall: drives the post-audit scheduler", async () => {
+  const { isNpmInstall } = await import("../src/deps.ts")
+  assert.equal(isNpmInstall("npm install lodash"), true)
+  assert.equal(isNpmInstall("npm.cmd i lodash"), true)
+  assert.equal(isNpmInstall("cd x && npm install lodash"), true)
+  assert.equal(isNpmInstall("npx lodash"), false)
+  assert.equal(isNpmInstall("pnpm dlx lodash"), false)
+  assert.equal(isNpmInstall("npm test"), false)
+  assert.equal(isNpmInstall("pip install requests"), false)
+})
+
+// --- review pass 2 regressions ---
+
+test("N-1: manager token is case-insensitive (Windows FS is not)", () => {
+  assert.equal(checkInstall("NPM INSTALL lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("PnPX lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("Npm.CMD install event-stream")?.reason, "blocklist")
+})
+
+test("N-2: single ampersand separates segments (cmd.exe)", () => {
+  assert.equal(checkInstall("echo x & npm install lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("echo x & npm install event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("echo x & echo y"), null)
+})
+
+test("N-3: npx -p=package form", () => {
+  assert.equal(checkInstall("npx -p=lodahs run")?.reason, "typosquat")
+  assert.equal(checkInstall("npx -p=lodash run"), null)
+})
+
+test("N-4: global flags before the subcommand", () => {
+  assert.equal(checkInstall("npm --prefix . install event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("yarn --cwd proj add lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("pnpm -C proj add lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("npm --prefix . install lodash"), null)
+  assert.equal(checkInstall("npm -g install lodahs"), null) // global out of scope even first
+})
+
+test("N-5: pip extras are stripped before the blocklist", () => {
+  assert.equal(checkInstall("pip install event-stream[socks]")?.reason, "blocklist")
+  assert.equal(checkInstall("pip install requests[socks]"), null)
+})
+
+test("N-6: bun add / bunx / bun x covered", () => {
+  assert.equal(checkInstall("bun add lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("bun install event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("bunx lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("bun x lodahs")?.reason, "typosquat")
+  assert.equal(checkInstall("bun add lodash"), null)
+})
+
+test("N-7: npm alias pulls the aliased package through the blocklist", () => {
+  assert.equal(checkInstall("npm i alias@npm:event-stream")?.reason, "blocklist")
+  assert.equal(checkInstall("npm i alias@npm:lodash"), null)
+})
+
+test("N-11: corrupted audit shapes do not produce phantom counts", () => {
+  // array instead of object
+  assert.equal(parseAuditReport(JSON.stringify({ auditReport: { vulnerabilities: [1, 2] } })), null)
+  // non-object entries skipped
+  const r = parseAuditReport(
+    JSON.stringify({ auditReport: { vulnerabilities: { a: null, b: "x", c: { severity: "high" } } } })
+  )
+  assert.deepEqual(r, { total: 1, severities: { high: 1 } })
 })

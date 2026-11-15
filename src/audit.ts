@@ -9,6 +9,8 @@ export interface AuditEvent {
   categories: string[]
   count: number
   action: "redacted" | "blocked" | "warn"
+  /** optional severity breakdown (npm post-audit) */
+  severities?: Record<string, number>
 }
 
 /**

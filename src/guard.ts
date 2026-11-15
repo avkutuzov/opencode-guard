@@ -1,6 +1,7 @@
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import type { Plugin } from "@opencode/plugin"
 import { createHash } from "node:crypto"
+import { spawn } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -10,7 +11,7 @@ import { isPathBlocked, isPathExempt, isPathWriteProtected } from "./glob.ts"
 import type { GuardConfig } from "./config.ts"
 import { appendAudit, type AuditEvent } from "./audit.ts"
 import { scanSkillDir } from "./skillcheck.ts"
-import { checkInstall } from "./deps.ts"
+import { checkInstall, isNpmInstall, parseAuditReport } from "./deps.ts"
 
 type Ctx = Plugin.Context
 
@@ -139,6 +140,81 @@ const tracked: { dispose(): Promise<void> }[] = []
 /** recent deps-audit dedup: tool.before and shell.create.before both see the same command */
 const DEPS_AUDIT_TTL_MS = 2000
 const depsAuditRecent = new Map<string, number>()
+
+/** post-audit: give the install ~60s to finish, then npm audit in the project dir (warn-only) */
+const POST_AUDIT_DELAY_MS = 60_000
+const POST_AUDIT_TIMEOUT_MS = 120_000
+/** don't stack audits for the same project dir (a burst of installs schedules one audit) */
+const postAuditRecent = new Map<string, number>()
+const POST_AUDIT_DEDUP_MS = 5 * 60_000
+
+function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void {
+  try {
+    if (!isNpmInstall(command)) return
+    const last = postAuditRecent.get(cwd)
+    if (last && Date.now() - last < POST_AUDIT_DEDUP_MS) return
+    postAuditRecent.set(cwd, Date.now())
+    if (postAuditRecent.size > 100) postAuditRecent.clear()
+    const timer = setTimeout(() => {
+      try {
+        const child = spawn("npm", ["audit", "--json"], {
+          cwd,
+          shell: process.platform === "win32",
+          detached: true,
+          windowsHide: true,
+        })
+        let stdout = ""
+        child.stdout?.on("data", (d: Buffer) => {
+          stdout += d.toString()
+        })
+        child.on("error", () => {})
+        // built-in spawn timeout only kills the win32 cmd.exe wrapper — enforce our own
+        let closed = false
+        const killer = setTimeout(() => {
+          try {
+            if (closed) return
+            if (process.platform === "win32") {
+              if (child.pid === undefined) return
+              spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {})
+            } else {
+              child.kill("SIGTERM")
+            }
+          } catch {}
+        }, POST_AUDIT_TIMEOUT_MS)
+        killer.unref?.()
+        child.on("close", () => {
+          try {
+            closed = true
+            clearTimeout(killer)
+            // partial JSON after a forced kill simply fails to parse — dropped, by design
+            const report = parseAuditReport(stdout)
+            if (!report || report.total === 0) return
+            const sev = Object.entries(report.severities)
+              .map(([k, v]) => `${k}:${v}`)
+              .join(" ")
+            audit(cfg, {
+              ts: new Date().toISOString(),
+              kind: "deps",
+              categories: ["audit-vulnerability"],
+              count: report.total,
+              action: "warn",
+              severities: report.severities,
+            })
+            console.warn(`guard: npm audit в ${cwd} — ${report.total} уязвимостей (${sev}), детали в аудите`)
+          } catch {
+            // never crash the plugin over a post-audit result
+          }
+        })
+        child.unref?.()
+      } catch {
+        // never crash the plugin over scheduling
+      }
+    }, POST_AUDIT_DELAY_MS)
+    timer.unref?.()
+  } catch {
+    // never crash the hook
+  }
+}
 
 export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
   const patterns = activePatterns(cfg.disabledPatterns)
@@ -368,9 +444,12 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
           if (!last || Date.now() - last > DEPS_AUDIT_TTL_MS) {
             audit(cfg, { ts: now(), kind: "deps", categories: [cat], count: 1, action: mutate ? "blocked" : "warn" })
           }
+          // warn mode lets the install through — it still qualifies for post-audit
+          if (!mutate && cfg.postAudit) schedulePostAudit(event.command, event.cwd, cfg)
           return
         }
       }
+      if (cfg.postAudit) schedulePostAudit(event.command, event.cwd, cfg)
       if (!cfg.redactOnWrite) return
       const r = redact(event.command, patterns)
       if (r.matches.length > 0) {
