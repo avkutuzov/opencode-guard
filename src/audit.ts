@@ -11,6 +11,8 @@ export interface AuditEvent {
   action: "redacted" | "blocked" | "warn"
   /** optional severity breakdown (npm post-audit) */
   severities?: Record<string, number>
+  /** optional short diagnostic (e.g. post-audit spawn failure) */
+  detail?: string
 }
 
 /**

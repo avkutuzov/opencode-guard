@@ -159,6 +159,18 @@ function auditDirFor(command: string, baseDir: string): string {
   }
 }
 
+/** npm audit invocation that works under both Node and Bun on any OS */
+function npmAuditRunner(): { cmd: string; args: string[] } {
+  if (process.platform === "win32") {
+    // Node cannot spawn .cmd without a shell (EINVAL, CVE-2024-27980); Bun can.
+    const isBun = "bun" in process.versions
+    return isBun
+      ? { cmd: "npm.cmd", args: ["audit", "--json"] }
+      : { cmd: "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd audit --json"] }
+  }
+  return { cmd: "npm", args: ["audit", "--json"] }
+}
+
 function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void {  try {
     if (!isNpmInstall(command)) return
     const last = postAuditRecent.get(cwd)
@@ -167,18 +179,27 @@ function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void
     if (postAuditRecent.size > 100) postAuditRecent.clear()
     const timer = setTimeout(() => {
       try {
-        const child = spawn("npm", ["audit", "--json"], {
+        const runner = npmAuditRunner()
+        const child = spawn(runner.cmd, runner.args, {
           cwd,
-          shell: process.platform === "win32",
-          detached: true,
           windowsHide: true,
         })
         let stdout = ""
         child.stdout?.on("data", (d: Buffer) => {
           stdout += d.toString()
         })
-        child.on("error", () => {})
-        // built-in spawn timeout only kills the win32 cmd.exe wrapper — enforce our own
+        child.on("error", (err: Error) => {
+          // permanent visibility: a failed audit spawn is itself audited
+          audit(cfg, {
+            ts: new Date().toISOString(),
+            kind: "deps",
+            categories: ["audit-error"],
+            count: 1,
+            action: "warn",
+            detail: String(err?.message ?? err).slice(0, 200),
+          })
+        })
+        // built-in spawn timeout only kills the win32 wrapper — enforce our own
         let closed = false
         const killer = setTimeout(() => {
           try {
