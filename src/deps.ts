@@ -384,7 +384,7 @@ export function isNpmInstall(command: string): boolean {
 export function expandShellVars(p: string): string {
   try {
     let out = p
-    out = out.replace(/^\$env:([A-Za-z_][A-Za-z0-9_]*)$/i, (_, n: string) => process.env[n] ?? p)
+    out = out.replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (m, n: string) => process.env[n] ?? m)
     out = out.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (m, n: string) => process.env[n] ?? m)
     if (out === "~") return homedir()
     if (out.startsWith("~/") || out.startsWith("~\\")) return join(homedir(), out.slice(2))

@@ -507,7 +507,7 @@ test("expandShellVars: $env:NAME, %NAME% and ~ resolve against the environment",
   try {
     assert.equal(expandShellVars("$env:GUARD_TEST_DIR"), "/tmp/guard-test")
     assert.equal(expandShellVars("%GUARD_TEST_DIR%"), "/tmp/guard-test")
-    assert.equal(expandShellVars("$env:GUARD_TEST_DIR\\sub"), "$env:GUARD_TEST_DIR\\sub") // only full-token form
+    assert.equal(expandShellVars("$env:GUARD_TEST_DIR\\sub"), "/tmp/guard-test\\sub") // inline form expands too
     assert.equal(expandShellVars("%NO_SUCH_GUARD_VAR%"), "%NO_SUCH_GUARD_VAR%")
     assert.equal(expandShellVars("/plain/path"), "/plain/path")
     const h = expandShellVars("~")

@@ -2,7 +2,7 @@ import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import type { Plugin } from "@opencode/plugin"
 import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { activePatterns, type Pattern } from "./patterns.ts"
@@ -160,12 +160,32 @@ function auditDirFor(command: string, baseDir: string): string {
   }
 }
 
+let cachedNpmCmd: string | undefined
+/** absolute npm.cmd path when findable via PATH (the service host env may lack System32/PATH entries) */
+function npmCmdPath(): string {
+  if (cachedNpmCmd !== undefined) return cachedNpmCmd
+  cachedNpmCmd = "npm.cmd"
+  try {
+    for (const dir of (process.env.PATH ?? "").split(";")) {
+      if (!dir) continue
+      const candidate = join(dir, "npm.cmd")
+      if (existsSync(candidate)) {
+        cachedNpmCmd = candidate
+        break
+      }
+    }
+  } catch {}
+  return cachedNpmCmd
+}
+
 /** npm audit invocation that works under both Node and Bun on any OS */
 function npmAuditRunner(): { cmd: string; args: string[] } {
-  // Windows: .cmd files need a cmd.exe host under BOTH runtimes (direct spawn -> EINVAL);
-  // /d /s /c with a single quoted command line is the documented safe form.
+  // Windows: .cmd files need a cmd.exe host under BOTH runtimes (direct spawn -> EINVAL),
+  // and the service host env may lack System32 in PATH — resolve absolute paths.
   if (process.platform === "win32") {
-    return { cmd: "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd audit --json"] }
+    const sysRoot = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows"
+    const cmd = join(sysRoot, "System32", "cmd.exe")
+    return { cmd, args: ["/d", "/s", "/c", `"${npmCmdPath()}" audit --json`] }
   }
   return { cmd: "npm", args: ["audit", "--json"] }
 }
@@ -214,7 +234,9 @@ function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void
             if (closed) return
             if (process.platform === "win32") {
               if (child.pid === undefined) return
-              spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {})
+              const sysRoot = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows"
+              const taskkill = join(sysRoot, "System32", "taskkill.exe")
+              spawn(taskkill, ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {})
             } else {
               child.kill("SIGTERM")
             }
