@@ -55,7 +55,7 @@ Or a local checkout:
 ]
 ```
 
-OpenCode installs the npm package automatically on startup. Then `opencode service restart`. Verify with `opencode api get "/api/plugin?directory=..."` — look for `"id":"guard"` with `"status":"active"`.
+OpenCode installs the npm package automatically on startup. Then `opencode service restart`. Verify with `opencode api get "/api/plugin?directory=..."` — look for `"id":"opencode-v2-guard"` with `"status":"active"`.
 
 ## Options
 
