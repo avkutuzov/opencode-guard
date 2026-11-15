@@ -1,18 +1,41 @@
 {
-  "name": "opencode-guard",
-  "version": "0.1.0",
-  "description": "Security plugin for OpenCode — scans prompts and tool calls for secrets/PII, redacts on write, blocks sensitive file paths, audits detections",
+  "name": "opencode-v2-guard",
+  "version": "1.0.0",
+  "description": "Security plugin for OpenCode V2 — deterministic secret/PII redaction, sensitive-path blocking, prompt-injection detection in skills, package-install interception (blocklist + typosquat)",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avkutuzov/opencode-guard.git"
+  },
+  "homepage": "https://github.com/avkutuzov/opencode-guard#readme",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "security",
+    "secrets",
+    "pii",
+    "redaction",
+    "prompt-injection",
+    "supply-chain",
+    "typosquat"
+  ],
   "exports": {
     ".": "./src/index.ts"
   },
   "files": [
-    "src"
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/*.test.ts\""
+    "test": "node --test \"test/*.test.ts\"",
+    "prepublishOnly": "npm run typecheck && npm run test"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "@opencode/plugin": "^2.2.7"

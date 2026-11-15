@@ -33,7 +33,18 @@ Specific patterns take priority over generic ones; nested matches collapse into 
 
 ## Installation
 
-In `~/.config/opencode/opencode.json`:
+From npm (recommended) — in `~/.config/opencode/opencode.json`:
+
+```json
+"plugins": [
+  {
+    "package": "opencode-v2-guard",
+    "options": { "mode": "enforce" }
+  }
+]
+```
+
+Or a local checkout:
 
 ```json
 "plugins": [
@@ -44,7 +55,7 @@ In `~/.config/opencode/opencode.json`:
 ]
 ```
 
-Then `opencode service restart`. Verify with `opencode api get "/api/plugin?directory=..."` — look for `"id":"guard"` with `"status":"active"`.
+OpenCode installs the npm package automatically on startup. Then `opencode service restart`. Verify with `opencode api get "/api/plugin?directory=..."` — look for `"id":"guard"` with `"status":"active"`.
 
 ## Options
 
@@ -145,7 +156,18 @@ opencode service restart
 
 ## Установка
 
-В `~/.config/opencode/opencode.json`:
+Из npm (рекомендуется) — в `~/.config/opencode/opencode.json`:
+
+```json
+"plugins": [
+  {
+    "package": "opencode-v2-guard",
+    "options": { "mode": "enforce" }
+  }
+]
+```
+
+Или локальный checkout:
 
 ```json
 "plugins": [
@@ -155,6 +177,8 @@ opencode service restart
   }
 ]
 ```
+
+OpenCode сам установит npm-пакет при старте. Затем `opencode service restart`.
 
 ## Опции
 
