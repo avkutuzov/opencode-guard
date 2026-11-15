@@ -177,6 +177,15 @@ function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void
     if (last && Date.now() - last < POST_AUDIT_DEDUP_MS) return
     postAuditRecent.set(cwd, Date.now())
     if (postAuditRecent.size > 100) postAuditRecent.clear()
+    // breadcrumb: an allowed install is booked for auditing (useful trail on its own)
+    audit(cfg, {
+      ts: new Date().toISOString(),
+      kind: "deps",
+      categories: ["audit-scheduled"],
+      count: 1,
+      action: "warn",
+      detail: cwd,
+    })
     const timer = setTimeout(() => {
       try {
         const runner = npmAuditRunner()
@@ -237,8 +246,15 @@ function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void
           }
         })
         child.unref?.()
-      } catch {
-        // never crash the plugin over scheduling
+      } catch (e) {
+        audit(cfg, {
+          ts: new Date().toISOString(),
+          kind: "deps",
+          categories: ["audit-error"],
+          count: 1,
+          action: "warn",
+          detail: "timer: " + String(e).slice(0, 200),
+        })
       }
     }, POST_AUDIT_DELAY_MS)
     timer.unref?.()
