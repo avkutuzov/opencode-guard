@@ -10,6 +10,7 @@ import { isPathBlocked, isPathExempt, isPathWriteProtected } from "./glob.ts"
 import type { GuardConfig } from "./config.ts"
 import { appendAudit, type AuditEvent } from "./audit.ts"
 import { scanSkillDir } from "./skillcheck.ts"
+import { checkInstall } from "./deps.ts"
 
 type Ctx = Plugin.Context
 
@@ -135,6 +136,10 @@ function trackHook(reg: Promise<{ dispose(): Promise<void> }>): void {
 
 const tracked: { dispose(): Promise<void> }[] = []
 
+/** recent deps-audit dedup: tool.before and shell.create.before both see the same command */
+const DEPS_AUDIT_TTL_MS = 2000
+const depsAuditRecent = new Map<string, number>()
+
 export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
   const patterns = activePatterns(cfg.disabledPatterns)
   const now = () => new Date().toISOString()
@@ -251,6 +256,23 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
           if (mutate) veto(`guard: команда обращается к '${blockedPath}' — доступ запрещён.`)
           return
         }
+        if (cfg.depsCheck) {
+          const verdict = checkInstall(input.command, cfg.blockedPackages, cfg.allowedPackages)
+          if (verdict) {
+            const cat = verdict.reason === "blocklist" ? "malicious-package" : "typosquat"
+            depsAuditRecent.set(input.command, Date.now())
+            if (depsAuditRecent.size > 100) depsAuditRecent.clear()
+            audit(cfg, { ts: now(), kind: "deps", tool, sessionID: event.sessionID, categories: [cat], count: 1, action })
+            if (mutate) {
+              const why =
+                verdict.reason === "blocklist"
+                  ? "пакет в списке известных вредоносных (инциденты цепочки поставок)"
+                  : `имя похоже на '${verdict.target}' (typosquat)`
+              veto(`guard: установка '${verdict.name}' заблокирована — ${why}. Если установка легитимна — попроси пользователя выполнить её вручную.`)
+            }
+            return
+          }
+        }
       }
 
       // secret redaction on mutating input (only when every involved path is exempt)
@@ -333,6 +355,21 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
         }
         audit(cfg, { ts: now(), kind: "shell", categories: ["path"], count: 1, action: mutate ? "blocked" : "warn" })
         return
+      }
+      if (cfg.depsCheck) {
+        const verdict = checkInstall(event.command, cfg.blockedPackages, cfg.allowedPackages)
+        if (verdict) {
+          const cat = verdict.reason === "blocklist" ? "malicious-package" : "typosquat"
+          if (mutate) {
+            const safe = verdict.name.replace(/["'`<>|&]/g, "")
+            event.command = `echo "guard: install blocked '${safe}'" && exit 1`
+          }
+          const last = depsAuditRecent.get(event.command)
+          if (!last || Date.now() - last > DEPS_AUDIT_TTL_MS) {
+            audit(cfg, { ts: now(), kind: "deps", categories: [cat], count: 1, action: mutate ? "blocked" : "warn" })
+          }
+          return
+        }
       }
       if (!cfg.redactOnWrite) return
       const r = redact(event.command, patterns)

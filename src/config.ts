@@ -11,6 +11,12 @@ export interface GuardConfig {
   scanSkillsOnLoad: boolean
   /** trusted skill dir names excluded from the startup scan */
   exemptSkills: string[]
+  /** intercept package installation commands (blocklist + typosquat) */
+  depsCheck: boolean
+  /** extra package names blocked from installation (union with built-in list) */
+  blockedPackages: string[]
+  /** package names exempted from the blocklist (escape hatch for legit installs) */
+  allowedPackages: string[]
   blockPaths: string[]
   writeProtectPaths: string[]
   exemptPaths: string[]
@@ -60,6 +66,9 @@ export function resolveConfig(options: unknown): GuardConfig {
     scanOutbound: o.scanOutbound !== false,
     scanSkillsOnLoad: o.scanSkillsOnLoad !== false,
     exemptSkills: strArray(o.exemptSkills) ? [...o.exemptSkills] : [],
+    depsCheck: o.depsCheck !== false,
+    blockedPackages: strArray(o.blockedPackages) ? [...o.blockedPackages] : [],
+    allowedPackages: strArray(o.allowedPackages) ? [...o.allowedPackages] : [],
     blockPaths: strArray(o.blockPaths) ? [...new Set([...DEFAULT_BLOCK_PATHS, ...o.blockPaths])] : [...DEFAULT_BLOCK_PATHS],
     writeProtectPaths: strArray(o.writeProtectPaths) ? [...o.writeProtectPaths] : [],
     exemptPaths: strArray(o.exemptPaths) ? [...o.exemptPaths] : [],

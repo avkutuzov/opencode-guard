@@ -3,7 +3,7 @@ import { join } from "node:path"
 
 export interface AuditEvent {
   ts: string
-  kind: "prompt" | "tool.before" | "tool.after" | "shell" | "context" | "skill"
+  kind: "prompt" | "tool.before" | "tool.after" | "shell" | "context" | "skill" | "deps"
   tool?: string
   sessionID?: string
   categories: string[]

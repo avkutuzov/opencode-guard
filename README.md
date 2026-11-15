@@ -16,6 +16,10 @@ Security plugin for [OpenCode](https://opencode.ai) V2: intercepts prompts, tool
 
 Audit: JSONL at `~/.local/share/opencode/guard/guard-audit.jsonl` — categories/counts/actions only, **never** raw values.
 
+## Dependency installation guard
+
+`npm/pnpm/yarn add`, `pip install`, `cargo add` are parsed before execution (phase 2): a built-in blocklist of known-malicious packages (event-stream, node-ipc, ua-parser-js, coa, rc, flatmap-stream) vetoes the install, and names at Levenshtein distance 1 from a curated top-120 npm list are flagged as typosquats (npm only — other ecosystems reuse the same names legitimately). Global installs (`-g`) are out of scope. Post-install auditing (npm audit / OSV) is planned for phase 2.5.
+
 ## Detection (29 patterns)
 
 - API keys: OpenAI `sk-`, GitHub `ghp_`/`github_pat_`, AWS `AKIA`, Google `AIza`/`ya29.`, Slack `xox` + webhooks, Stripe, GitLab `glpat-`, Telegram bot, HuggingFace, npm
@@ -51,6 +55,9 @@ Then `opencode service restart`. Verify with `opencode api get "/api/plugin?dire
 | `redactOnWrite` | `true` | redact on write/shell |
 | `scanOutbound` | `true` | scrub outbound context |
 | `scanSkillsOnLoad` | `true` | scan installed skills at startup (warn-only audit) |
+| `depsCheck` | `true` | intercept package installs (blocklist + typosquat) |
+| `blockedPackages` | `[]` | extra package names blocked from install (union) |
+| `allowedPackages` | `[]` | names exempted from the blocklist (escape hatch) |
 | `blockPaths` | built-in list | **added** to defaults (union) |
 | `writeProtectPaths` | `[]` | read ok, write blocked |
 | `exemptPaths` | `[]` | exceptions (fixtures with legitimate keys) |
@@ -120,6 +127,10 @@ opencode service restart
 
 Аудит: JSONL в `~/.local/share/opencode/guard/guard-audit.jsonl` — только категории/количества/действия, **никогда** сырые значения.
 
+## Защита установки зависимостей
+
+`npm/pnpm/yarn add`, `pip install`, `cargo add` парсятся до исполнения (фаза 2): встроенный blocklist известных вредоносных пакетов (event-stream, node-ipc, ua-parser-js, coa, rc, flatmap-stream) блокирует установку, а имена на расстоянии Левенштейна 1 от топ-120 npm ловятся как typosquat (только npm — в других экосистемах те же имена легитимны). Глобальные установки (`-g`) вне зоны охвата. Пост-аудит (npm audit / OSV) — фаза 2.5.
+
 ## Детекция (29 паттернов)
 
 - API-ключи: OpenAI `sk-`, GitHub `ghp_`/`github_pat_`, AWS `AKIA`, Google `AIza`/`ya29.`, Slack `xox`+webhooks, Stripe, GitLab `glpat-`, Telegram bot, HuggingFace, npm
@@ -154,6 +165,9 @@ opencode service restart
 | `redactOnWrite` | `true` | маскировка при записи/шелле |
 | `scanOutbound` | `true` | скраб исходящего контекста |
 | `scanSkillsOnLoad` | `true` | стартовый скан установленных скиллов (только warn-аудит) |
+| `depsCheck` | `true` | перехват установки пакетов (blocklist + typosquat) |
+| `blockedPackages` | `[]` | дополнительные запрещённые имена пакетов (union) |
+| `allowedPackages` | `[]` | имена, снятые с блоклиста (обход ложных срабатываний) |
 | `blockPaths` | дефолтный список | **добавляется** к дефолтам (union) |
 | `writeProtectPaths` | `[]` | read ok, write blocked |
 | `exemptPaths` | `[]` | исключения (фикстуры с легитимными ключами) |
