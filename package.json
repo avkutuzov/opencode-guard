@@ -6,9 +6,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/avkutuzov/opencode-guard.git"
+    "url": "git+https://github.com/avkutuzov/opencode-v2-guard.git"
   },
-  "homepage": "https://github.com/avkutuzov/opencode-guard#readme",
+  "homepage": "https://github.com/avkutuzov/opencode-v2-guard#readme",
   "keywords": [
     "opencode",
     "opencode-plugin",

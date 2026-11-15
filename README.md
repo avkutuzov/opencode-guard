@@ -1,4 +1,4 @@
-# opencode-guard
+# opencode-v2-guard
 
 Security plugin for [OpenCode](https://opencode.ai) V2: intercepts prompts, tool calls and shell commands, detects secrets and personal data, and masks them **before** they reach disk, model context, logs or the network. No LLM involved — only deterministic patterns.
 
@@ -49,7 +49,7 @@ Or a local checkout:
 ```json
 "plugins": [
   {
-    "package": "/path/to/opencode-guard",
+    "package": "/path/to/opencode-v2-guard",
     "options": { "mode": "enforce" }
   }
 ]
@@ -172,7 +172,7 @@ opencode service restart
 ```json
 "plugins": [
   {
-    "package": "/absolute/path/to/opencode-guard",
+    "package": "/absolute/path/to/opencode-v2-guard",
     "options": { "mode": "enforce" }
   }
 ]
