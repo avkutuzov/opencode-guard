@@ -189,16 +189,32 @@ function npmCmdPath(): string {
   return cachedNpmCmd
 }
 
-/** npm audit invocation that works under both Node and Bun on any OS */
+/** npm audit invocation: prefer node.exe + npm-cli.js (plain exe, no cmd/quoting); cmd.exe host as fallback */
 function npmAuditRunner(): { cmd: string; args: string[] } {
-  // Windows: .cmd files need a cmd.exe host under BOTH runtimes (direct spawn -> EINVAL),
-  // and the service host env may lack System32 in PATH — resolve absolute paths.
-  if (process.platform === "win32") {
-    const sysRoot = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows"
-    const cmd = join(sysRoot, "System32", "cmd.exe")
-    return { cmd, args: ["/d", "/s", "/c", `"${npmCmdPath()}" audit --json`] }
+  if (process.platform !== "win32") return { cmd: "npm", args: ["audit", "--json"] }
+  const bases: string[] = []
+  for (const dir of (process.env.PATH ?? "").split(";")) {
+    if (dir) bases.push(dir)
   }
-  return { cmd: "npm", args: ["audit", "--json"] }
+  const pf = process.env.ProgramFiles ?? "C:\\Program Files"
+  const local = process.env.LOCALAPPDATA ?? ""
+  bases.push(join(pf, "nodejs"))
+  if (local) bases.push(join(local, "Programs", "nodejs"))
+  for (const base of bases) {
+    const node = join(base, "node.exe")
+    const cli = join(base, "node_modules", "npm", "bin", "npm-cli.js")
+    try {
+      if (existsSync(node) && existsSync(cli)) {
+        return { cmd: node, args: [cli, "audit", "--json"] }
+      }
+    } catch {}
+  }
+  // last resort: cmd.exe host with whatever npm.cmd we can find
+  const sysRoot = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows"
+  return {
+    cmd: join(sysRoot, "System32", "cmd.exe"),
+    args: ["/d", "/s", "/c", `${npmCmdPath()} audit --json`],
+  }
 }
 
 function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void {  try {
