@@ -5,6 +5,8 @@
  * Post-install auditing (npm audit / OSV) is a later phase — it needs the
  * project cwd, which the hook API does not guarantee.
  */
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 export interface InstallPackage {
   name: string
@@ -376,6 +378,20 @@ export function checkInstall(command: string, extraBlocked: readonly string[] = 
 /** true if any segment is an npm install (drives the post-audit scheduler; npx/dlx don't count) */
 export function isNpmInstall(command: string): boolean {
   return parseSegments(command).some((t) => t.manager === "npm")
+}
+
+/** expand the common shell variable forms in a --prefix operand ($env:NAME, %NAME%, ~) */
+export function expandShellVars(p: string): string {
+  try {
+    let out = p
+    out = out.replace(/^\$env:([A-Za-z_][A-Za-z0-9_]*)$/i, (_, n: string) => process.env[n] ?? p)
+    out = out.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (m, n: string) => process.env[n] ?? m)
+    if (out === "~") return homedir()
+    if (out.startsWith("~/") || out.startsWith("~\\")) return join(homedir(), out.slice(2))
+    return out
+  } catch {
+    return p
+  }
 }
 
 /** extract an npm --prefix operand if present (install/audit should run there, not in the session dir) */

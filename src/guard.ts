@@ -11,7 +11,7 @@ import { isPathBlocked, isPathExempt, isPathWriteProtected } from "./glob.ts"
 import type { GuardConfig } from "./config.ts"
 import { appendAudit, type AuditEvent } from "./audit.ts"
 import { scanSkillDir } from "./skillcheck.ts"
-import { checkInstall, isNpmInstall, extractNpmPrefix, parseAuditReport } from "./deps.ts"
+import { checkInstall, isNpmInstall, extractNpmPrefix, expandShellVars, parseAuditReport } from "./deps.ts"
 
 type Ctx = Plugin.Context
 
@@ -153,7 +153,8 @@ function auditDirFor(command: string, baseDir: string): string {
   try {
     const prefix = extractNpmPrefix(command)
     if (!prefix) return baseDir
-    return isAbsolute(prefix) ? prefix : join(baseDir, prefix)
+    const expanded = expandShellVars(prefix)
+    return isAbsolute(expanded) ? expanded : join(baseDir, expanded)
   } catch {
     return baseDir
   }
@@ -161,12 +162,10 @@ function auditDirFor(command: string, baseDir: string): string {
 
 /** npm audit invocation that works under both Node and Bun on any OS */
 function npmAuditRunner(): { cmd: string; args: string[] } {
+  // Windows: .cmd files need a cmd.exe host under BOTH runtimes (direct spawn -> EINVAL);
+  // /d /s /c with a single quoted command line is the documented safe form.
   if (process.platform === "win32") {
-    // Node cannot spawn .cmd without a shell (EINVAL, CVE-2024-27980); Bun can.
-    const isBun = "bun" in process.versions
-    return isBun
-      ? { cmd: "npm.cmd", args: ["audit", "--json"] }
-      : { cmd: "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd audit --json"] }
+    return { cmd: "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd audit --json"] }
   }
   return { cmd: "npm", args: ["audit", "--json"] }
 }

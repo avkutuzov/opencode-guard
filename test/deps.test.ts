@@ -500,3 +500,19 @@ test("extractNpmPrefix: finds the audit target dir", async () => {
   assert.equal(extractNpmPrefix("npm install lodash"), undefined)
   assert.equal(extractNpmPrefix("echo x & npm install lodash --prefix rel/dir"), "rel/dir")
 })
+
+test("expandShellVars: $env:NAME, %NAME% and ~ resolve against the environment", async () => {
+  const { expandShellVars } = await import("../src/deps.ts")
+  process.env.GUARD_TEST_DIR = "/tmp/guard-test"
+  try {
+    assert.equal(expandShellVars("$env:GUARD_TEST_DIR"), "/tmp/guard-test")
+    assert.equal(expandShellVars("%GUARD_TEST_DIR%"), "/tmp/guard-test")
+    assert.equal(expandShellVars("$env:GUARD_TEST_DIR\\sub"), "$env:GUARD_TEST_DIR\\sub") // only full-token form
+    assert.equal(expandShellVars("%NO_SUCH_GUARD_VAR%"), "%NO_SUCH_GUARD_VAR%")
+    assert.equal(expandShellVars("/plain/path"), "/plain/path")
+    const h = expandShellVars("~")
+    assert.ok(h.length > 2, "~ expands to a home path")
+  } finally {
+    delete process.env.GUARD_TEST_DIR
+  }
+})
