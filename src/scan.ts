@@ -57,7 +57,7 @@ export function isLuhnValid(text: string): boolean {
 export function isPathContext(match: Pick<Match, "start" | "end">, source: string): boolean {
   const left = match.start > 0 ? source[match.start - 1] : ""
   const right = match.end < source.length ? source[match.end] : ""
-  // '~<login>' is the home-dir shorthand for that user (X5: the login IS an email)
+  // '~<login>' is the home-dir shorthand for that user (корп. среда: логин = email)
   return left === "/" || left === "\\" || left === "~" || right === "/" || right === "\\"
 }
 
@@ -305,7 +305,7 @@ export interface EnvMaskResult {
  * - secret categories (anything but pii/pii-name) fully replace the value — a
  *   partially masked secret could leave a recognizable remainder;
  * - PII in a CRITICAL_ENV_KEYS var is left untouched — masking it would break
- *   every child process (the X5 $HOME incident);
+ *   every child process (the masked-$HOME field incident);
  * - PII elsewhere masks only the matched substrings.
  */
 export function redactEnvValue(

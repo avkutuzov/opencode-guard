@@ -8,13 +8,13 @@ test("resolveConfig: piiEmailAllowDomains defaults to empty", () => {
 })
 
 test("resolveConfig: piiEmailAllowDomains parsed and lowercased; non-array ignored", () => {
-  const cfg = resolveConfig({ piiEmailAllowDomains: ["X5.RU", "Corp.Example.COM"] })
-  assert.deepEqual(cfg.piiEmailAllowDomains, ["x5.ru", "corp.example.com"])
-  assert.deepEqual(resolveConfig({ piiEmailAllowDomains: "x5.ru" }).piiEmailAllowDomains, [])
+  const cfg = resolveConfig({ piiEmailAllowDomains: ["CORP.EXAMPLE", "Corp.Example.COM"] })
+  assert.deepEqual(cfg.piiEmailAllowDomains, ["corp.example", "corp.example.com"])
+  assert.deepEqual(resolveConfig({ piiEmailAllowDomains: "corp.example" }).piiEmailAllowDomains, [])
   assert.deepEqual(resolveConfig({ piiEmailAllowDomains: ["ok", 5] }).piiEmailAllowDomains, [])
 })
 
-test("CRITICAL_ENV_KEYS covers the X5-critical vars and nothing exotic", () => {
+test("CRITICAL_ENV_KEYS covers the corp-critical vars and nothing exotic", () => {
   for (const k of ["HOME", "USERPROFILE", "HOMEPATH", "HOMEDRIVE", "PATH", "PWD", "OLDPWD", "USER", "USERNAME", "LOGNAME", "SHELL", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "TERM", "SHLVL", "HOSTNAME"]) {
     assert.ok(CRITICAL_ENV_KEYS.has(k), `${k} must be critical`)
   }

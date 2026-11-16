@@ -165,9 +165,9 @@ test("stripe, gitlab, telegram tokens detected", () => {
   assert.ok(scan("123456789:ABCdefGHIjklMNOpqrSTUvwxyz012345678", pats).some((x) => x.matchedBy === "telegram-bot-token"))
 })
 
-// --- context-safe email masking (spec: docs/pii-email-spec.md, X5 field lessons) ---
+// --- context-safe email masking (spec: docs/pii-email-spec.md, корп. field lessons) ---
 
-const EM = "user" + "@" + "x5.ru"
+const EM = "user" + "@" + "corp.example"
 const SKK = "sk-ABCD" + "EFGH1234567890"
 
 test("FR1: pii email inside a file path is not masked", () => {
@@ -199,35 +199,35 @@ test("FR1/G3: secrets are masked even inside paths", () => {
 })
 
 test("FR3: domain allowlist keeps listed emails unmasked, case-insensitive", () => {
-  const opts = { piiEmailAllowDomains: ["x5.ru"] }
-  const up = "user" + "@" + "X5.RU"
+  const opts = { piiEmailAllowDomains: ["corp.example"] }
+  const up = "user" + "@" + "CORP.EXAMPLE"
   assert.equal(redact("owner " + up + " here", pats, opts).text, "owner " + up + " here")
   const other = "user" + "@" + "other.com"
   assert.equal(redact("owner " + other + " here", pats, opts).text, "owner <REDACTED:pii> here")
 })
 
 test("FR3: allowlist is exact-domain only - subdomains and lookalikes are masked", () => {
-  const opts = { piiEmailAllowDomains: ["x5.ru"] }
-  const sub = "user" + "@" + "mail.x5.ru"
+  const opts = { piiEmailAllowDomains: ["corp.example"] }
+  const sub = "user" + "@" + "mail.corp.example"
   assert.equal(redact("mail " + sub + " end", pats, opts).text, "mail <REDACTED:pii> end")
-  const look = "user" + "@" + "x5.ru.evil.com"
+  const look = "user" + "@" + "corp.example.evil.com"
   assert.equal(redact("mail " + look + " end", pats, opts).text, "mail <REDACTED:pii> end")
 })
 
 test("FR3: allowlisted email inside a path stays unmasked (path-context agrees)", () => {
-  const opts = { piiEmailAllowDomains: ["x5.ru"] }
+  const opts = { piiEmailAllowDomains: ["corp.example"] }
   assert.equal(redact("ls /home/" + EM + "/x", pats, opts).text, "ls /home/" + EM + "/x")
 })
 
 test("FR3/G3: allowlist does not lift secrets - connection string still masked", () => {
-  const opts = { piiEmailAllowDomains: ["db.x5.ru"] }
-  const cs = "postgres://u:" + "s3cret@" + "db.x5.ru:5432/app"
+  const opts = { piiEmailAllowDomains: ["db.corp.example"] }
+  const cs = "postgres://u:" + "s3cret@" + "db.corp.example:5432/app"
   const r = redact("url " + cs, pats, opts)
   assert.ok(r.matches.some((x) => x.category === "connection-string"))
-  assert.equal(r.text, "url <REDACTED:connection-string>db.x5.ru:5432/app")
+  assert.equal(r.text, "url <REDACTED:connection-string>db.corp.example:5432/app")
 })
 
-// --- FR2/FR5: env value handling (X5 incident: broken HOME) ---
+// --- FR2/FR5: env value handling (корп. инцидент: broken HOME) ---
 
 test("FR2: PII in a critical env var is left untouched", () => {
   const r = redactEnvValue("HOME", "/home/" + EM, pats)
@@ -274,7 +274,7 @@ test("FR2/FR5: mixed nonPii+PII in one var fully replaces (secrets win)", () => 
 })
 
 test("FR3: allowlisted email in a non-critical env var is left whole", () => {
-  const r = redactEnvValue("WORKMAIL", "work " + EM + " mail", pats, { piiEmailAllowDomains: ["x5.ru"] })
+  const r = redactEnvValue("WORKMAIL", "work " + EM + " mail", pats, { piiEmailAllowDomains: ["corp.example"] })
   assert.equal(r.action, "skip")
   assert.equal(r.value, "work " + EM + " mail")
 })
@@ -309,8 +309,34 @@ test("R2 windows: env key case-insensitive for the critical list", () => {
   assert.equal(r3.action, "full")
 })
 
+test("R4: pii-email has no quadratic backtracking on long class runs", () => {
+  const digits = "7".repeat(100000)
+  let t0 = performance.now()
+  const m1 = scan(digits, pats)
+  const d1 = performance.now() - t0
+  assert.equal(m1.length, 0)
+  assert.ok(d1 < 500, "100K digit run must scan under 500ms, took " + d1.toFixed(1))
+  const dots = "a.".repeat(50000)
+  t0 = performance.now()
+  const m2 = scan(dots, pats)
+  const d2 = performance.now() - t0
+  assert.equal(m2.length, 0)
+  assert.ok(d2 < 500, "100K a-dot run must scan under 500ms, took " + d2.toFixed(1))
+})
+
+test("R4 boundary: local part up to 64 chars is detected, 65 is not (RFC)", () => {
+  const dom = "@" + "d.com"
+  const ok64 = "a".repeat(64) + dom
+  assert.equal(scan(ok64, pats).length, 1, "64-char local part is a valid email")
+  const giant = "a".repeat(1000) + dom
+  const t0 = performance.now()
+  const mg = scan(giant, pats)
+  assert.equal(mg.length, 1, "over-long local still matches its RFC-valid 64-char tail")
+  assert.ok(performance.now() - t0 < 500)
+})
+
 test("R3: allowlist reaches encoded email through the decoded rescan", () => {
-  const opts = { piiEmailAllowDomains: ["x5.ru"] }
+  const opts = { piiEmailAllowDomains: ["corp.example"] }
   const b64 = Buffer.from("mail " + EM + " end").toString("base64")
   assert.equal(scan(b64, pats, opts).length, 0)
   const other = "user" + "@" + "other.com"

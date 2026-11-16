@@ -33,7 +33,7 @@ export interface GuardConfig {
 
 /**
  * env vars whose values must never be rewritten for PII reasons — breaking
- * them breaks every child process (X5 incident: masked $HOME made of an
+ * them breaks every child process (корп. инцидент: masked $HOME made of an
  * email-like login). Secrets are still fully masked in these vars.
  */
 export const CRITICAL_ENV_KEYS: ReadonlySet<string> = new Set([

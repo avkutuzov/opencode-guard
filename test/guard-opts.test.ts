@@ -28,12 +28,12 @@ function makeCtx() {
 }
 
 function makeCfg() {
-  const cfg = resolveConfig({ mode: "enforce", piiEmailAllowDomains: ["x5.ru"] })
+  const cfg = resolveConfig({ mode: "enforce", piiEmailAllowDomains: ["corp.example"] })
   cfg.audit.enabled = false
   return cfg
 }
 
-const EM = "user" + "@" + "x5.ru"
+const EM = "user" + "@" + "corp.example"
 const OTHER = "user" + "@" + "other.com"
 
 test("scanOpts reaches tool.after content scrub (MAJOR-1 regression pin)", () => {

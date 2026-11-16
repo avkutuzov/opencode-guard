@@ -65,7 +65,7 @@ export const DEFAULT_PATTERNS: readonly Pattern[] = [
   { id: "snils", category: "pii", regex: "\\d{3}-\\d{3}-\\d{3}[ ]\\d{2}\\b" },
   { id: "passport-ru", category: "pii", regex: "(?<=паспорт[\\s:№]{0,6})\\d{4}[\\s-]*№?\\s*\\d{6}" },
   { id: "phone-ru", category: "pii", regex: "(?<!\\d)(?:\\+7|8)[\\s(-]*\\d{3}[\\s)-]*\\d{3}[\\s-]*\\d{2}[\\s-]*\\d{2}(?!\\d)" },
-  { id: "pii-email", category: "pii", regex: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}" },
+  { id: "pii-email", category: "pii", regex: "[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,}" },
   { id: "bank-card", category: "pii", regex: "\\b\\d{4}[ -]?\\d{4}[ -]?\\d{4}[ -]?\\d{4}(?:[ -]?\\d{3})?\\b", luhn: true },
   // --- ФИО: only with explicit context marker, name itself masked ---
   {

@@ -101,13 +101,13 @@ Corporate machines often have an email-shaped login, so absolute paths contain a
 - `opencode run` may admit a prompt before plugins are ready — the context scrub covers that window
 - ФИО <REDACTED:pii-name> requires an explicit marker (too many false positives otherwise)
 - The shell hook cannot throw a veto (API limitation) — the command is replaced with `echo … && exit 1`
-- the pii-email regex can backtrack quadratically on very long runs of its character class (≥100K chars, e.g. a base64 dump in tool output) — up to ~19s hook stall; a `{1,64}` bound on the local part is planned
+- pre-v1.2.1: the pii-email regex could stall ~19s on ≥100K-char runs of its character class (base64 dumps) — fixed in v1.2.1 via RFC-length bounds (64/255)
 
 ## Development
 
 ```bash
 npm install
-npm test          # node --test (173 tests)
+npm test          # node --test (175 tests)
 npm run typecheck # tsc --noEmit
 ```
 
@@ -120,7 +120,7 @@ The OpenCode server watches `src/**` and reloads the plugin on save — no servi
 **After changes, make sure nothing broke:**
 
 ```bash
-npm test   # expect: pass 173, fail 0
+npm test   # expect: pass 175, fail 0
 ```
 
 **If anything misbehaves (plugin failed to load, config changed outside the watched files):**
@@ -243,7 +243,7 @@ OpenCode сам установит npm-пакет при старте. Зате�
 - `~`, `$VAR`, шелл-глобы в командах не раскрываются при статической проверке — команда нейтрализуется только если токен буквально совпадает с blocked-путём
 - `opencode run` может адмитить промпт до готовности плагинов — защиту в этом окне догоняет context-скраб
 - ФИО — только с явным маркером (без него — слишком много ложных срабатываний)
-- pii-email regex даёт O(n²)-бэктрекинг на длинном однотонном ране (≥100К символов класса, напр. base64-дамп в выводе тулов) — до ~19с блокировки хука; фикс `{1,64}` на локальную часть запланирован
+- до v1.2.1: regex pii-email мог блокировать хук ~19с на ране ≥100К символов класса (base64-дампы) — исправлено в v1.2.1 границами RFC-длины (64/255)
 - shell-хук не может кидать вето (API так не умеет) — команда заменяется на `echo … && exit 1`
 - decode-and-scan не ловит: path-эвейжен (`.[e]nv`-глобы), chunk-splitting (`cut -c`), вложенный энкодинг (глубина 1), блобы >8192 символов. От случайных утечек, не от целенаправленного агента
 
@@ -261,7 +261,7 @@ npm run typecheck # tsc --noEmit
 
 **Правки кода:** сохранил файл — сервер сам перезагрузил плагин (file watcher). Никаких команд не требуется.
 
-**Проверка, что не сломано:** `npm test` — ожидается `pass 173, fail 0`.
+**Проверка, что не сломано:** `npm test` — ожидается `pass 175, fail 0`.
 
 **Если что-то пошло не так (плагин не загрузился, правки вне зоны watcher'а):** `opencode service restart` — эта одна команда универсальный «сброс/апдейт».
 
