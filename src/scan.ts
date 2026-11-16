@@ -1,3 +1,4 @@
+import { CRITICAL_ENV_KEYS } from "./config.ts"
 import { DEFAULT_PATTERNS, type Pattern } from "./patterns.ts"
 
 export interface Match {
@@ -10,6 +11,11 @@ export interface Match {
   raw: string
   /** replacement text */
   mask: string
+}
+
+export interface ScanOptions {
+  /** email domains never masked (exact, case-insensitive; subdomains NOT included) */
+  piiEmailAllowDomains?: readonly string[]
 }
 
 const compiled = new Map<string, RegExp>()
@@ -39,6 +45,29 @@ export function isLuhnValid(text: string): boolean {
     dbl = !dbl
   }
   return sum % 10 === 0
+}
+
+/**
+ * Context check (spec: docs/pii-email-spec.md FR1): a PII match is skipped when
+ * a path separator is immediately adjacent to it — `/` or `\` touching the match
+ * boundary means the "email" is a path segment (e.g. /home/<REDACTED:pii>/.config,
+ * C:\Users\<REDACTED:pii>). An scp-style user@host: is NOT a path (right neighbor
+ * is `:`) and stays masked. Secrets are never subject to this check.
+ */
+export function isPathContext(match: Pick<Match, "start" | "end">, source: string): boolean {
+  const left = match.start > 0 ? source[match.start - 1] : ""
+  const right = match.end < source.length ? source[match.end] : ""
+  // '~<login>' is the home-dir shorthand for that user (X5: the login IS an email)
+  return left === "/" || left === "\\" || left === "~" || right === "/" || right === "\\"
+}
+
+/** domain after the last @ lowercased; exact equality against the allowlist */
+function emailDomainAllowed(raw: string, allow: readonly string[] | undefined): boolean {
+  if (!allow || allow.length === 0) return false
+  const at = raw.lastIndexOf("@")
+  if (at < 0) return false
+  const domain = raw.slice(at + 1).toLowerCase()
+  return allow.includes(domain)
 }
 
 function maskFor(p: Pattern, raw: string): string {
@@ -175,11 +204,16 @@ function findEncodedBlobs(text: string, isProtected: (s: number, e: number) => b
  * Find sensitive data in text. Earlier patterns in the list win overlaps
  * (specific beats generic: jwt before credential-assignment, etc.).
  */
-export function scan(text: string, patterns: readonly Pattern[] = DEFAULT_PATTERNS): Match[] {
-  return scanInner(text, patterns, true)
+export function scan(text: string, patterns: readonly Pattern[] = DEFAULT_PATTERNS, opts?: ScanOptions): Match[] {
+  return scanInner(text, patterns, true, opts)
 }
 
-function scanInner(text: string, patterns: readonly Pattern[], allowEncoded: boolean): Match[] {
+function scanInner(
+  text: string,
+  patterns: readonly Pattern[],
+  allowEncoded: boolean,
+  opts?: ScanOptions,
+): Match[] {
   if (!text) return []
   // already-masked regions are untouchable: no pattern may fire inside a placeholder
   const protectedSpans: Array<[number, number]> = []
@@ -199,7 +233,7 @@ function scanInner(text: string, patterns: readonly Pattern[], allowEncoded: boo
   if (allowEncoded) {
     for (const blob of findEncodedBlobs(text, isProtected)) {
       if (claimed.some(([s, e]) => blob.start < e && blob.end > s)) continue
-      const decodedMatches = scanInner(blob.decoded, patterns, false)
+      const decodedMatches = scanInner(blob.decoded, patterns, false, opts)
       if (decodedMatches.length === 0) continue
       claimed.push([blob.start, blob.end])
       const first = decodedMatches[0]
@@ -232,6 +266,13 @@ function scanInner(text: string, patterns: readonly Pattern[], allowEncoded: boo
   const accepted: Match[] = []
   let cursor = -1
   for (const { match } of all) {
+    // FR1: PII inside file paths is not masked (mask would break the command);
+    // secrets always stay masked
+    if (match.category === "pii" && isPathContext(match, text)) continue
+    // FR3: allowlisted email domains are treated as public identifiers
+    if (match.matchedBy.split(":")[0] === "pii-email" && emailDomainAllowed(match.raw, opts?.piiEmailAllowDomains)) {
+      continue
+    }
     if (match.start >= cursor) {
       accepted.push(match)
       cursor = match.end
@@ -240,8 +281,8 @@ function scanInner(text: string, patterns: readonly Pattern[], allowEncoded: boo
   return accepted
 }
 
-export function redact(text: string, patterns: readonly Pattern[] = DEFAULT_PATTERNS): { text: string; matches: Match[] } {
-  const matches = scan(text, patterns)
+export function redact(text: string, patterns: readonly Pattern[] = DEFAULT_PATTERNS, opts?: ScanOptions): { text: string; matches: Match[] } {
+  const matches = scan(text, patterns, opts)
   if (matches.length === 0) return { text, matches }
   let out = text
   for (let i = matches.length - 1; i >= 0; i--) {
@@ -249,4 +290,40 @@ export function redact(text: string, patterns: readonly Pattern[] = DEFAULT_PATT
     out = out.slice(0, m.start) + m.mask + out.slice(m.end)
   }
   return { text: out, matches }
+}
+
+export type EnvMaskAction = "skip" | "full" | "substring"
+
+export interface EnvMaskResult {
+  value: string
+  action: EnvMaskAction
+  matches: Match[]
+}
+
+/**
+ * FR2/FR5 (spec: docs/pii-email-spec.md): env value handling for shell.create.before.
+ * - secret categories (anything but pii/pii-name) fully replace the value — a
+ *   partially masked secret could leave a recognizable remainder;
+ * - PII in a CRITICAL_ENV_KEYS var is left untouched — masking it would break
+ *   every child process (the X5 $HOME incident);
+ * - PII elsewhere masks only the matched substrings.
+ */
+export function redactEnvValue(
+  key: string,
+  value: string,
+  patterns: readonly Pattern[] = DEFAULT_PATTERNS,
+  opts?: ScanOptions,
+): EnvMaskResult {
+  const matches = scan(value, patterns, opts)
+  if (matches.length === 0) return { value, action: "skip", matches }
+  const hasNonPii = matches.some((x) => x.category !== "pii" && x.category !== "pii-name")
+  if (hasNonPii) return { value: "<REDACTED:env>", action: "full", matches }
+  // Windows env keys are case-insensitive (Path, Home); normalize before lookup
+  if (CRITICAL_ENV_KEYS.has(key) || CRITICAL_ENV_KEYS.has(key.toUpperCase())) return { value, action: "skip", matches }
+  let out = value
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const m = matches[i]
+    out = out.slice(0, m.start) + m.mask + out.slice(m.end)
+  }
+  return { value: out, action: "substring", matches }
 }

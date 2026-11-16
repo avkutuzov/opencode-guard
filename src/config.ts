@@ -24,7 +24,39 @@ export interface GuardConfig {
   exemptPaths: string[]
   audit: { enabled: boolean; dir: string }
   disabledPatterns: string[]
+  /**
+   * email domains never masked anywhere (exact match after the last @,
+   * case-insensitive; subdomains NOT included). Empty by default.
+   */
+  piiEmailAllowDomains: string[]
 }
+
+/**
+ * env vars whose values must never be rewritten for PII reasons — breaking
+ * them breaks every child process (X5 incident: masked $HOME made of an
+ * email-like login). Secrets are still fully masked in these vars.
+ */
+export const CRITICAL_ENV_KEYS: ReadonlySet<string> = new Set([
+  "HOME",
+  "USERPROFILE",
+  "HOMEPATH",
+  "HOMEDRIVE",
+  "PATH",
+  "PWD",
+  "OLDPWD",
+  "USER",
+  "USERNAME",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "SHLVL",
+  "HOSTNAME",
+])
 
 export const DEFAULT_BLOCK_PATHS: readonly string[] = [
   ".env",
@@ -80,5 +112,8 @@ export function resolveConfig(options: unknown): GuardConfig {
       dir: str(audit.dir) ? audit.dir : DEFAULT_AUDIT_DIR,
     },
     disabledPatterns: strArray(o.disabledPatterns) ? [...o.disabledPatterns] : [],
+    piiEmailAllowDomains: strArray(o.piiEmailAllowDomains)
+      ? [...new Set(o.piiEmailAllowDomains.map((d) => d.toLowerCase()))]
+      : [],
   }
 }

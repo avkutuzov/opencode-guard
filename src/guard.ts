@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { activePatterns, type Pattern } from "./patterns.ts"
-import { redact, scan } from "./scan.ts"
+import { redact, redactEnvValue, scan, type ScanOptions } from "./scan.ts"
 import { isPathBlocked, isPathExempt, isPathWriteProtected } from "./glob.ts"
 import type { GuardConfig } from "./config.ts"
 import { appendAudit, type AuditEvent } from "./audit.ts"
@@ -42,14 +42,14 @@ function keepValue(key: string): boolean {
  * Recursively count (and optionally mask) secret matches in string values.
  * Skips match-anchors and path-like keys (paths are policy-checked, not rewritten).
  */
-function deepRedact(value: unknown, patterns: readonly Pattern[], mutate: boolean, skipKey?: string): number {
+function deepRedact(value: unknown, patterns: readonly Pattern[], mutate: boolean, skipKey?: string, opts?: ScanOptions): number {
   if (typeof value === "string") {
     if (skipKey && keepValue(skipKey)) return 0
-    return redact(value, patterns).matches.length
+    return redact(value, patterns, opts).matches.length
   }
   if (Array.isArray(value)) {
     let n = 0
-    for (let i = 0; i < value.length; i++) n += deepRedact(value[i], patterns, mutate)
+    for (let i = 0; i < value.length; i++) n += deepRedact(value[i], patterns, mutate, undefined, opts)
     return n
   }
   if (isRecord(value)) {
@@ -57,14 +57,14 @@ function deepRedact(value: unknown, patterns: readonly Pattern[], mutate: boolea
     for (const [k, v] of Object.entries(value)) {
       if (typeof v === "string") {
         if (!keepValue(k)) {
-          const r = redact(v, patterns)
+          const r = redact(v, patterns, opts)
           if (r.matches.length > 0) {
             if (mutate) value[k] = r.text
             n += r.matches.length
           }
         }
       } else {
-        n += deepRedact(v, patterns, mutate, k)
+        n += deepRedact(v, patterns, mutate, k, opts)
       }
     }
     return n
@@ -325,13 +325,14 @@ function schedulePostAudit(command: string, cwd: string, cfg: GuardConfig): void
 
 export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
   const patterns = activePatterns(cfg.disabledPatterns)
+  const scanOpts = { piiEmailAllowDomains: cfg.piiEmailAllowDomains }
   const now = () => new Date().toISOString()
 
   // --- startup scan of installed skills (warn-only, never blocks plugin load) ---
   if (cfg.scanSkillsOnLoad) {
     try {
       const dir = join(homedir(), ".config", "opencode", "skills")
-      const findings = scanSkillDir(dir, patterns, cfg.exemptSkills)
+      const findings = scanSkillDir(dir, patterns, cfg.exemptSkills, scanOpts)
       // hot-reload: skip re-audit when the findings summary is unchanged
       const hash = createHash("sha256").update(JSON.stringify(findings)).digest("hex")
       const marker = join(cfg.audit.dir, "guard-skillscan.state")
@@ -379,7 +380,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
 
         const text = event.prompt.text
         if (!text) return
-        const r = redact(text, patterns)
+        const r = redact(text, patterns, scanOpts)
         if (r.matches.length === 0) return
         if (mutate) {
           event.prompt.text = r.text
@@ -467,7 +468,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
       if (cfg.redactOnWrite) {
         const allExempt = paths.length > 0 && paths.every((p) => isPathExempt(p, cfg))
         if (!allExempt) {
-          const count = deepRedact(input, patterns, mutate)
+          const count = deepRedact(input, patterns, mutate, undefined, scanOpts)
           if (count > 0) {
             audit(cfg, { ts: now(), kind: "tool.before", tool, sessionID: event.sessionID, categories: ["secret"], count, action: mutate ? "redacted" : "warn" })
           }
@@ -485,7 +486,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
         // bash providers often echo the failing command/stderr into the message
         const msg = event.error?.message
         if (typeof msg === "string") {
-          const r = redact(msg, patterns)
+          const r = redact(msg, patterns, scanOpts)
           if (r.matches.length > 0) {
             if (mutate) event.error = new ToolError({ message: r.text })
             audit(cfg, { ts: now(), kind: "tool.after", tool: event.tool, sessionID: event.sessionID, categories: categoriesOf(r.matches), count: r.matches.length, action: mutate ? "redacted" : "warn" })
@@ -499,7 +500,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
       let n = 0
 
       const scrubText = (s: string): string => {
-        const r = redact(s, patterns)
+        const r = redact(s, patterns, scanOpts)
         if (r.matches.length > 0) {
           n += r.matches.length
           for (const m of r.matches) cats.add(m.category)
@@ -522,7 +523,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
       // content was already scrubbed above — scan the remainder (output/metadata)
       // so matches are counted once
       const rest = { ...result, content: undefined }
-      n += deepRedact(rest, patterns, mutate)
+      n += deepRedact(rest, patterns, mutate, undefined, scanOpts)
       if (n > 0) {
         audit(cfg, { ts: now(), kind: "tool.after", tool: event.tool, sessionID: event.sessionID, categories: [...cats].sort(), count: n, action: mutate ? "redacted" : "warn" })
       }
@@ -563,18 +564,17 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
       }
       if (cfg.postAudit) schedulePostAudit(event.command, auditDirFor(event.command, event.cwd), cfg)
       if (!cfg.redactOnWrite) return
-      const r = redact(event.command, patterns)
+      const r = redact(event.command, patterns, scanOpts)
       if (r.matches.length > 0) {
         if (mutate) event.command = r.text
         audit(cfg, { ts: now(), kind: "shell", categories: categoriesOf(r.matches), count: r.matches.length, action: mutate ? "redacted" : "warn" })
       }
       for (const [k, v] of Object.entries(event.env)) {
         if (typeof v !== "string") continue
-        const m = scan(v, patterns)
-        if (m.length > 0) {
-          if (mutate) event.env[k] = "<REDACTED:env>"
-          audit(cfg, { ts: now(), kind: "shell", categories: categoriesOf(m), count: m.length, action: mutate ? "redacted" : "warn" })
-        }
+        const er = redactEnvValue(k, v, patterns, scanOpts)
+        if (er.action === "skip") continue
+        if (mutate) event.env[k] = er.value
+        audit(cfg, { ts: now(), kind: "shell", categories: categoriesOf(er.matches), count: er.matches.length, action: mutate ? "redacted" : "warn" })
       }
     }),
   )
@@ -587,7 +587,7 @@ export function registerGuard(ctx: Ctx, cfg: GuardConfig): () => Promise<void> {
         let n = 0
         const cats = new Set<string>()
         const scrub = (s: string): string => {
-          const r = redact(s, patterns)
+          const r = redact(s, patterns, scanOpts)
           if (r.matches.length > 0) {
             n += r.matches.length
             for (const m of r.matches) cats.add(m.category)

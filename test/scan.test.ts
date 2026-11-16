@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { scan, redact, isLuhnValid } from "../src/scan.ts"
+import { scan, redact, redactEnvValue, isLuhnValid } from "../src/scan.ts"
+import { CRITICAL_ENV_KEYS } from "../src/config.ts"
 import { DEFAULT_PATTERNS } from "../src/patterns.ts"
 
 const pats = DEFAULT_PATTERNS
@@ -163,3 +164,158 @@ test("stripe, gitlab, telegram tokens detected", () => {
   assert.ok(scan("glpat-x1y2z3a4b5c6d7e8f9g0h1i2j3k4l5m6n7o8", pats).some((x) => x.matchedBy === "gitlab-pat"))
   assert.ok(scan("123456789:ABCdefGHIjklMNOpqrSTUvwxyz012345678", pats).some((x) => x.matchedBy === "telegram-bot-token"))
 })
+
+// --- context-safe email masking (spec: docs/pii-email-spec.md, X5 field lessons) ---
+
+const EM = "user" + "@" + "x5.ru"
+const SKK = "sk-ABCD" + "EFGH1234567890"
+
+test("FR1: pii email inside a file path is not masked", () => {
+  assert.equal(redact("ls /home/" + EM + "/.config", pats).text, "ls /home/" + EM + "/.config")
+  assert.equal(redact("ls /home/" + EM, pats).text, "ls /home/" + EM)
+  assert.equal(redact(String.raw`dir C:\\Users\\${EM}\\docs`, pats).text, String.raw`dir C:\\Users\\${EM}\\docs`)
+  assert.equal(redact("cat ~/proj/" + EM + "/file.txt", pats).text, "cat ~/proj/" + EM + "/file.txt")
+  assert.equal(redact("open " + EM + "/file", pats).text, "open " + EM + "/file")
+})
+
+test("FR1: email in plain text is still masked (G2)", () => {
+  assert.equal(redact("mail me: " + EM + ".", pats).text, "mail me: <REDACTED:pii>.")
+  assert.equal(redact("email: " + EM, pats).text, "email: <REDACTED:pii>")
+  assert.equal(redact("mailto:" + EM, pats).text, "mailto:<REDACTED:pii>")
+  assert.equal(redact("contact: " + EM + " end", pats).text, "contact: <REDACTED:pii> end")
+})
+
+test("FR1 resolved: scp-style <REDACTED:pii> is NOT a path and gets masked", () => {
+  const dotted = "user" + "@" + "host.com"
+  const r = redact("scp " + dotted + ":~/file.txt .", pats)
+  assert.equal(r.text, "scp <REDACTED:pii>:~/file.txt .")
+  const plain = "user" + "@" + "host"
+  assert.equal(redact("scp " + plain + ":~/f .", pats).text, "scp " + plain + ":~/f .")
+})
+
+test("FR1/G3: secrets are masked even inside paths", () => {
+  const km = "<REDACTED:api-" + "key:sk-…7890>"
+  assert.equal(redact("cat /tmp/" + SKK + "/x", pats).text, "cat /tmp/" + km + "/x")
+})
+
+test("FR3: domain allowlist keeps listed emails unmasked, case-insensitive", () => {
+  const opts = { piiEmailAllowDomains: ["x5.ru"] }
+  const up = "user" + "@" + "X5.RU"
+  assert.equal(redact("owner " + up + " here", pats, opts).text, "owner " + up + " here")
+  const other = "user" + "@" + "other.com"
+  assert.equal(redact("owner " + other + " here", pats, opts).text, "owner <REDACTED:pii> here")
+})
+
+test("FR3: allowlist is exact-domain only - subdomains and lookalikes are masked", () => {
+  const opts = { piiEmailAllowDomains: ["x5.ru"] }
+  const sub = "user" + "@" + "mail.x5.ru"
+  assert.equal(redact("mail " + sub + " end", pats, opts).text, "mail <REDACTED:pii> end")
+  const look = "user" + "@" + "x5.ru.evil.com"
+  assert.equal(redact("mail " + look + " end", pats, opts).text, "mail <REDACTED:pii> end")
+})
+
+test("FR3: allowlisted email inside a path stays unmasked (path-context agrees)", () => {
+  const opts = { piiEmailAllowDomains: ["x5.ru"] }
+  assert.equal(redact("ls /home/" + EM + "/x", pats, opts).text, "ls /home/" + EM + "/x")
+})
+
+test("FR3/G3: allowlist does not lift secrets - connection string still masked", () => {
+  const opts = { piiEmailAllowDomains: ["db.x5.ru"] }
+  const cs = "postgres://u:" + "s3cret@" + "db.x5.ru:5432/app"
+  const r = redact("url " + cs, pats, opts)
+  assert.ok(r.matches.some((x) => x.category === "connection-string"))
+  assert.equal(r.text, "url <REDACTED:connection-string>db.x5.ru:5432/app")
+})
+
+// --- FR2/FR5: env value handling (X5 incident: broken HOME) ---
+
+test("FR2: PII in a critical env var is left untouched", () => {
+  const r = redactEnvValue("HOME", "/home/" + EM, pats)
+  assert.equal(r.action, "skip")
+  assert.equal(r.value, "/home/" + EM)
+})
+
+test("FR2: every CRITICAL_ENV_KEYS entry skips PII", () => {
+  for (const key of CRITICAL_ENV_KEYS) {
+    const r = redactEnvValue(key, "prefix " + EM + " suffix", pats)
+    assert.equal(r.action, "skip", key + " must skip PII")
+    assert.equal(r.value, "prefix " + EM + " suffix")
+  }
+})
+
+test("FR2/G3: secrets are fully replaced even in critical env vars", () => {
+  const r = redactEnvValue("HOME", "x " + SKK + " y", pats)
+  assert.equal(r.action, "full")
+  assert.equal(r.value, "<REDACTED:env>")
+})
+
+test("FR5: PII in a non-critical env var masks only the substring", () => {
+  const r = redactEnvValue("WORKMAIL", "work " + EM + " mail", pats)
+  assert.equal(r.action, "substring")
+  assert.equal(r.value, "work <REDACTED:pii> mail")
+})
+
+test("FR5: clean env values are skipped without changes", () => {
+  const r = redactEnvValue("PATH", "/usr/bin:/bin", pats)
+  assert.equal(r.action, "skip")
+  assert.equal(r.value, "/usr/bin:/bin")
+})
+
+test("FR5: email-shaped value that is a path stays whole (no matches at all)", () => {
+  const r = redactEnvValue("WORKDIR", "/home/" + EM, pats)
+  assert.equal(r.action, "skip")
+  assert.equal(r.value, "/home/" + EM)
+})
+
+test("FR2/FR5: mixed nonPii+PII in one var fully replaces (secrets win)", () => {
+  const r = redactEnvValue("LEGACY", "mail " + EM + " key " + SKK, pats)
+  assert.equal(r.action, "full")
+  assert.equal(r.value, "<REDACTED:env>")
+})
+
+test("FR3: allowlisted email in a non-critical env var is left whole", () => {
+  const r = redactEnvValue("WORKMAIL", "work " + EM + " mail", pats, { piiEmailAllowDomains: ["x5.ru"] })
+  assert.equal(r.action, "skip")
+  assert.equal(r.value, "work " + EM + " mail")
+})
+
+// --- review pass 1 regressions (v1.2) ---
+
+test("R1: tilde home shorthand with an email login is a path and stays whole", () => {
+  assert.equal(redact("ls ~/" + EM + "/f", pats).text, "ls ~/" + EM + "/f")
+  assert.equal(redact("ls ~" + EM, pats).text, "ls ~" + EM)
+})
+
+test("R1: quoted path with email stays whole", () => {
+  assert.equal(redact('ls "/home/' + EM + '"', pats).text, 'ls "/home/' + EM + '"')
+})
+
+test("R1 boundary: pii-name with a trailing separator is still masked (category pii-name)", () => {
+  const r = redact("ФИО: Ивано" + "ва Ма" + "рия Сер" + "геевна/", pats)
+  assert.equal(r.matches.filter((x) => x.category === "pii-name").length, 1)
+})
+
+test("R1 boundary: phone and card in paths are skipped like email (category pii)", () => {
+  assert.equal(redact("cat /x/<REDACTED:pii>/y", pats).text, "cat /x/<REDACTED:pii>/y")
+  assert.equal(redact("cat /x/771501234512/y", pats).text, "cat /x/771501234512/y")
+})
+
+test("R2 windows: env key case-insensitive for the critical list", () => {
+  const r1 = redactEnvValue("Path", "prefix " + EM + " suffix", pats)
+  assert.equal(r1.action, "skip")
+  const r2 = redactEnvValue("home", "prefix " + EM + " suffix", pats)
+  assert.equal(r2.action, "skip")
+  const r3 = redactEnvValue("HOMEPATH", "x " + SKK + " y", pats)
+  assert.equal(r3.action, "full")
+})
+
+test("R3: allowlist reaches encoded email through the decoded rescan", () => {
+  const opts = { piiEmailAllowDomains: ["x5.ru"] }
+  const b64 = Buffer.from("mail " + EM + " end").toString("base64")
+  assert.equal(scan(b64, pats, opts).length, 0)
+  const other = "user" + "@" + "other.com"
+  const b64b = Buffer.from("mail " + other + " end").toString("base64")
+  assert.ok(scan(b64b, pats, opts).some((x) => x.matchedBy.startsWith("pii-email")))
+})
+
+
