@@ -1,6 +1,6 @@
 {
   "name": "opencode-v2-guard",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "description": "Security plugin for OpenCode V2 — deterministic secret/PII redaction, sensitive-path blocking, prompt-injection detection in skills, package-install interception (blocklist + typosquat)",
   "type": "module",
   "license": "MIT",
